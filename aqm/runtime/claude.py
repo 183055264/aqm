@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import selectors
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -160,6 +161,25 @@ def _check_claude_cli_available() -> None:
         )
 
 
+
+
+def _resolve_cmd(exe: str) -> list[str]:
+    """Resolve CLI to argv prefix. Returns list of args to prepend."""
+    if sys.platform == "win32":
+        r = shutil.which(exe + ".exe")
+        if r:
+            return [r]
+        for ext in (".cmd", ".bat"):
+            r = shutil.which(exe + ext)
+            if r:
+                return [r]
+        r = shutil.which(exe)
+        if r:
+            return [r]
+    r = shutil.which(exe)
+    return [r] if r else [exe]
+
+
 class ClaudeCodeRuntime(AbstractRuntime):
     """Execute a task by invoking the Claude Code CLI as a subprocess."""
 
@@ -187,7 +207,7 @@ class ClaudeCodeRuntime(AbstractRuntime):
         # shell=True) so that quotes, newlines, and other special characters in
         # the prompt / system-prompt are passed verbatim to the CLI without any
         # shell interpretation.
-        cmd: list[str] = ["claude", "--print", "-p", prompt]
+        cmd: list[str] = _resolve_cmd("claude") + ["--print", "-p", prompt]
 
         # --- System prompt -------------------------------------------------------
         if agent.system_prompt:
@@ -228,6 +248,10 @@ class ClaudeCodeRuntime(AbstractRuntime):
             agent.id,
             " ".join(_redact_command(cmd)),
         )
+
+        # On Windows, stream-json mode causes WinError 10093 - use non-streaming
+        if sys.platform == "win32" and on_output:
+            on_output = None
 
         try:
             if on_output:
@@ -332,6 +356,7 @@ class ClaudeCodeRuntime(AbstractRuntime):
             stderr=subprocess.PIPE,
             text=True,
             cwd=str(self.project_root),
+            env=os.environ.copy(),
         )
 
         output_parts: list[str] = []

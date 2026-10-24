@@ -31,8 +31,11 @@ from aqm.core.task import StageRecord, Task, TaskStatus
 from aqm.queue.base import AbstractQueue
 from aqm.runtime.base import AbstractRuntime
 from aqm.runtime.claude import ClaudeCodeRuntime
-from aqm.runtime.gemini import GeminiCLIRuntime
-from aqm.runtime.codex import CodexCLIRuntime
+from aqm.runtime.gemini import GeminiRuntime
+from aqm.runtime.codex import CodexRuntime
+from aqm.runtime.opencode import OpencodeRuntime
+from aqm.runtime.kilo import KiloRuntime
+from aqm.runtime.cline import ClineRuntime
 
 from aqm.core.config import ProjectConfig
 
@@ -102,9 +105,15 @@ class Pipeline:
 
         if rt not in self._runtimes:
             if rt == "gemini":
-                self._runtimes[rt] = GeminiCLIRuntime(self.project_root, timeout=t.gemini)
+                self._runtimes[rt] = GeminiRuntime(self.project_root, timeout=t.gemini)
             elif rt == "codex":
-                self._runtimes[rt] = CodexCLIRuntime(self.project_root, timeout=t.codex)
+                self._runtimes[rt] = CodexRuntime(self.project_root, timeout=t.codex)
+            elif rt == "opencode":
+                self._runtimes[rt] = OpencodeRuntime(self.project_root, timeout=getattr(t, 'opencode', 600))
+            elif rt == "kilo":
+                self._runtimes[rt] = KiloRuntime(self.project_root, timeout=getattr(t, 'kilo', 600))
+            elif rt == "cline":
+                self._runtimes[rt] = ClineRuntime(self.project_root, timeout=getattr(t, 'cline', 600))
             else:
                 raise ValueError(f"Unknown runtime: {rt}")
         return self._runtimes[rt]

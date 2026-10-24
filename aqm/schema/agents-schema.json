@@ -168,7 +168,7 @@
         },
         "runtime": {
           "type": ["string", "null"],
-          "enum": ["claude", "gemini", "codex", null],
+          "enum": ["claude", "gemini", "codex", "opencode", "kilo", "cline", null],
           "default": null,
           "description": "Execution runtime. Required for type \"agent\", not used for type \"session\". \"claude\" uses Anthropic Claude CLI. \"gemini\" uses Google Gemini CLI. \"codex\" uses OpenAI Codex CLI."
         },

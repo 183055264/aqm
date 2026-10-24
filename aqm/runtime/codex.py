@@ -1,23 +1,12 @@
-"""CodexCLIRuntime — OpenAI Codex CLI integration.
-
-Invokes ``codex exec`` in non-interactive (headless) mode.
-
-Codex CLI reference:
-  - ``codex exec "prompt"``: Non-interactive execution
-  - ``-m`` / ``--model``: Model selection (default: gpt-5-codex)
-  - ``--full-auto``: Workspace-write sandbox + on-request approvals
-  - ``-o`` / ``--output-last-message``: Write final message to file
-  - ``-C`` / ``--cd``: Set working directory
-
-System prompts are passed by prepending to the prompt text, as the
-Codex CLI does not have a dedicated system prompt flag.
-"""
+"""CodexRuntime — OpenAI Codex CLI integration."""
 
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from aqm.core.agent import AgentDefinition
@@ -26,11 +15,10 @@ from aqm.runtime.base import AbstractRuntime, OutputCallback, RuntimeExecutionEr
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_CODEX_MODEL = "o4-mini"
+_DEFAULT_CODEX_MODEL = None
 
 
 def _classify_error(stderr: str, returncode: int) -> str:
-    """Classify a CLI error into a coarse category."""
     lower = stderr.lower() if stderr else ""
     if "context window" in lower or "token limit" in lower or "too long" in lower:
         return "context_overflow"
@@ -42,21 +30,34 @@ def _classify_error(stderr: str, returncode: int) -> str:
 
 
 def _check_codex_cli_available() -> None:
-    """Verify that the ``codex`` CLI binary is on PATH."""
     if shutil.which("codex") is None:
         raise FileNotFoundError(
             "The 'codex' CLI was not found on PATH. "
-            "Install it via: npm install -g @openai/codex "
-            "or see https://github.com/openai/codex"
+            "Install it with: npm install -g @openai/codex"
         )
 
 
-class CodexCLIRuntime(AbstractRuntime):
-    """Run OpenAI Codex CLI in non-interactive (exec) mode.
+def _resolve_cmd(exe: str) -> list[str]:
+    """Resolve CLI to argv prefix."""
+    if sys.platform == "win32":
+        # 1) Real .exe on PATH
+        r = shutil.which(exe + ".exe")
+        if r:
+            return [r]
+        # 2) Fallback: any .cmd/.bat
+        for ext in (".cmd", ".bat"):
+            r = shutil.which(exe + ext)
+            if r:
+                return [r]
+        r = shutil.which(exe)
+        if r:
+            return [r]
+    r = shutil.which(exe)
+    return [r] if r else [exe]
 
-    Uses ``codex exec "prompt"`` which streams progress to stderr
-    and prints the final agent message to stdout.
-    """
+
+class CodexRuntime(AbstractRuntime):
+    """Execute tasks using the OpenAI Codex CLI."""
 
     def __init__(self, project_root=None, timeout: int = 600) -> None:
         self._project_root = project_root or Path.cwd()
@@ -64,7 +65,7 @@ class CodexCLIRuntime(AbstractRuntime):
 
     @property
     def name(self) -> str:
-        return "codex_cli"
+        return "codex"
 
     def run(
         self,
@@ -77,63 +78,60 @@ class CodexCLIRuntime(AbstractRuntime):
     ) -> str:
         _check_codex_cli_available()
 
-        # Codex CLI has no --system-prompt flag; prepend to user prompt.
         full_prompt = prompt
-        if agent.system_prompt:
-            full_prompt = f"[System Instructions]\n{agent.system_prompt}\n\n[Task]\n{prompt}"
 
-        cmd: list[str] = [
-            "codex", "exec",
-            full_prompt,
-            "--full-auto",
-        ]
+        cmd: list[str] = _resolve_cmd("codex") + ["exec", full_prompt, "--auto"]
 
         if agent.model:
-            cmd.extend(["-m", agent.model])
+            cmd.extend(["--model", agent.model])
 
         if agent.cli_flags:
             cmd.extend(agent.cli_flags)
 
-        # Set working directory
-        cmd.extend(["-C", str(self._project_root)])
+        cmd.extend(["--cwd", str(self._project_root)])
 
         logger.info(
-            "[CodexCLIRuntime] Running agent '%s' (model=%s)",
+            "[CodexRuntime] Running agent '%s' (model=%s)",
             agent.id,
             agent.model or _DEFAULT_CODEX_MODEL,
         )
 
-        if on_output:
+        if on_output and sys.platform != "win32":
             return self._run_streaming(cmd, agent, on_output, on_tool)
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=self._timeout,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+                cwd=str(self._project_root),
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeExecutionError(
+                f"codex CLI timed out after {self._timeout}s (agent={agent.id})",
+                error_category="timeout",
+            )
 
         if result.returncode != 0:
             stderr = result.stderr.strip()
             error_category = _classify_error(stderr, result.returncode)
-            error_msg = (
-                stderr or f"process exited with code {result.returncode}"
-            )
+            error_msg = stderr or f"process exited with code {result.returncode}"
             logger.error(
-                "[CodexCLIRuntime] Agent '%s' failed (%s): %s",
+                "[CodexRuntime] Agent '%s' failed (%s): %s",
                 agent.id,
                 error_category,
                 error_msg,
             )
             raise RuntimeExecutionError(
-                f"Codex CLI execution failed (agent={agent.id}): {error_msg}",
+                f"codex CLI execution failed (agent={agent.id}): {error_msg}",
                 partial_output=result.stdout.strip(),
                 error_category=error_category,
             )
 
         output = result.stdout.strip()
         logger.info(
-            "[CodexCLIRuntime] Agent '%s' completed (%d chars)",
+            "[CodexRuntime] Agent '%s' completed (%d chars)",
             agent.id,
             len(output),
         )
@@ -146,148 +144,48 @@ class CodexCLIRuntime(AbstractRuntime):
         on_output: OutputCallback,
         on_tool: ToolCallback = None,
     ) -> str:
-        """Run with streaming via Popen.
-
-        Codex CLI streams progress to stderr (tool actions, file reads/writes)
-        and final output to stdout.  When ``on_tool`` is provided, stderr is
-        also monitored via selectors for tool-related lines.
-        """
-        import json
-
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            cwd=str(self._project_root),
         )
 
         output_parts: list[str] = []
 
-        if not on_tool:
-            # Simple stdout-only streaming (no stderr monitoring needed)
-            try:
-                while True:
-                    line = proc.stdout.readline()  # type: ignore[union-attr]
-                    if not line:
-                        break
-                    output_parts.append(line)
-                    try:
-                        on_output(line.rstrip("\n"))
-                    except Exception:
-                        pass
-            except subprocess.TimeoutExpired:
-                raise RuntimeExecutionError(
-                    f"Codex CLI timed out (agent={agent.id})",
-                    partial_output="".join(output_parts).strip(),
-                    error_category="timeout",
-                )
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                proc.wait()
-        else:
-            # Multiplex stdout + stderr for tool events
-            import selectors
-            sel = selectors.DefaultSelector()
-            sel.register(proc.stdout, selectors.EVENT_READ, "stdout")  # type: ignore[union-attr]
-            if proc.stderr:
-                sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
+        try:
+            while True:
+                line = proc.stdout.readline() if proc.stdout else None
+                if not line:
+                    break
+                output_parts.append(line)
+                try:
+                    on_output(line.rstrip("\n"))
+                except Exception:
+                    pass
 
-            open_streams = {"stdout", "stderr"} if proc.stderr else {"stdout"}
+            proc.wait(timeout=10)
 
-            try:
-                while open_streams:
-                    events = sel.select(timeout=30)
-                    if not events:
-                        if proc.poll() is not None:
-                            break
-                        continue
-
-                    for key, _ in events:
-                        stream_name = key.data
-                        line = key.fileobj.readline()  # type: ignore[union-attr]
-                        if not line:
-                            open_streams.discard(stream_name)
-                            continue
-
-                        if stream_name == "stdout":
-                            output_parts.append(line)
-                            try:
-                                on_output(line.rstrip("\n"))
-                            except Exception:
-                                pass
-                        elif stream_name == "stderr":
-                            stripped = line.strip()
-                            if not stripped:
-                                continue
-                            try:
-                                event = json.loads(stripped)
-                                etype = event.get("type", "")
-                                if etype == "function_call":
-                                    try:
-                                        on_tool("tool_start", {
-                                            "tool": event.get("name", ""),
-                                            "input": event.get("arguments", event.get("args", {})),
-                                        })
-                                    except Exception:
-                                        pass
-                                elif etype == "function_call_output":
-                                    try:
-                                        on_tool("tool_result", {
-                                            "tool": event.get("name", ""),
-                                            "content": event.get("output", ""),
-                                        })
-                                    except Exception:
-                                        pass
-                            except json.JSONDecodeError:
-                                lower = stripped.lower()
-                                if any(kw in lower for kw in ("reading ", "writing ", "executing ", "running ")):
-                                    try:
-                                        on_tool("tool_start", {
-                                            "tool": "shell",
-                                            "input": {"command": stripped},
-                                        })
-                                    except Exception:
-                                        pass
-
-            except subprocess.TimeoutExpired:
-                raise RuntimeExecutionError(
-                    f"Codex CLI timed out (agent={agent.id})",
-                    partial_output="".join(output_parts).strip(),
-                    error_category="timeout",
-                )
-            finally:
-                sel.close()
-                if proc.poll() is None:
-                    proc.kill()
-                proc.wait()
-
-        if proc.returncode != 0:
-            try:
-                stderr = (
-                    proc.stderr.read().strip() if proc.stderr  # type: ignore[union-attr]
-                    else ""
-                )
-            except (ValueError, OSError):
-                stderr = ""
-            error_category = _classify_error(stderr, proc.returncode)
-            error_msg = stderr or f"process exited with code {proc.returncode}"
-            logger.error(
-                "[CodexCLIRuntime] Agent '%s' failed (%s): %s",
-                agent.id,
-                error_category,
-                error_msg,
-            )
+        except subprocess.TimeoutExpired:
+            proc.kill()
             raise RuntimeExecutionError(
-                f"Codex CLI execution failed (agent={agent.id}): {error_msg}",
-                partial_output="".join(output_parts).strip(),
-                error_category=error_category,
+                f"codex CLI timed out after {self._timeout}s (agent={agent.id})",
+                error_category="timeout",
             )
 
         output = "".join(output_parts).strip()
-        logger.info(
-            "[CodexCLIRuntime] Agent '%s' completed (%d chars)",
-            agent.id,
-            len(output),
-        )
+        if proc.returncode != 0:
+            stderr = proc.stderr.read() if proc.stderr else ""
+            error_category = _classify_error(stderr, proc.returncode)
+            raise RuntimeExecutionError(
+                f"codex CLI execution failed (agent={agent.id}): {stderr or 'unknown error'}",
+                partial_output=output,
+                error_category=error_category,
+            )
+
         return output
+
+
+# Backward-compatible alias
+CodexCLIRuntime = CodexRuntime

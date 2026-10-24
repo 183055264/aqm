@@ -44,6 +44,9 @@ class RuntimeTimeouts(BaseModel):
     claude: int = 600
     gemini: int = 600
     codex: int = 600
+    opencode: int = 600
+    kilo: int = 600
+    cline: int = 600
 
 
 # ---------------------------------------------------------------------------

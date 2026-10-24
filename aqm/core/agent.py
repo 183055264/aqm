@@ -160,7 +160,7 @@ class AgentDefinition(BaseModel):
     id: str
     name: str = ""
     type: Literal["agent", "session"] = "agent"
-    runtime: Optional[Literal["claude", "gemini", "codex"]] = None
+    runtime: Optional[Literal["claude", "gemini", "codex", "opencode", "kilo", "cline"]] = None
     model: Optional[str] = None
     system_prompt: str = ""
     handoffs: list[Handoff] = Field(default_factory=list)

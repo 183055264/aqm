@@ -433,6 +433,16 @@ function toggleThinking() {{
     if (outputEl) {{ outputEl.style.display = 'block'; outputEl.textContent += d.text + '\\n'; outputEl.scrollTop = outputEl.scrollHeight; }}
     if (outputLabel) outputLabel.style.display = 'block';
   }});
+  es.addEventListener('tool_call', (e) => {{
+    const d = JSON.parse(e.data);
+    const label = '[Tool: ' + (d.tool || 'unknown') + '] ' + (d.title || '') + ' (' + (d.status || '?') + ')';
+    if (outputEl) {{
+      outputEl.style.display = 'block';
+      outputEl.textContent += label + '\\n';
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }}
+    if (outputLabel) outputLabel.style.display = 'block';
+  }});
   es.addEventListener('stage_complete', (e) => {{
     const d = JSON.parse(e.data);
     statusEl.innerHTML = 'Stage ' + d.stage_number + ': <strong>' + d.agent_id + '</strong> — ' + (d.gate_result || 'done');

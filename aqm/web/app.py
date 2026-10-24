@@ -26,7 +26,7 @@ from aqm.queue.sqlite import SQLiteQueue
 
 def create_app(project_root: Path) -> FastAPI:
     """Create and return the FastAPI application for the aqm dashboard."""
-    app = FastAPI(title="aqm Dashboard", docs_url="/docs")
+    app = FastAPI(title="aqm 控制台", docs_url="/docs")
 
     project_root = Path(project_root).resolve()
     db_path = get_db_path(project_root)
@@ -130,7 +130,7 @@ def create_app(project_root: Path) -> FastAPI:
         try:
             task = queue.get(task_id)
             if task is None:
-                raise HTTPException(status_code=404, detail="Task not found")
+                raise HTTPException(status_code=404, detail="任务未找到")
             agents, _ = _get_agents()
             tasks_dir = get_tasks_dir(project_root)
             ctx_file = ContextFile(tasks_dir / task_id)
@@ -180,7 +180,7 @@ def create_app(project_root: Path) -> FastAPI:
         ctx_file = ContextFile(tasks_dir / task_id)
         content = ctx_file.read()
         if not content:
-            raise HTTPException(404, "No context file for this task")
+            raise HTTPException(404, "该任务没有上下文文件")
         return PlainTextResponse(content, media_type="text/plain")
 
     # ── Global SSE (dashboard real-time counters) ───────────────────

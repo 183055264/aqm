@@ -24,14 +24,14 @@ def render_pipelines(
   <td>{default_badge}</td>
   <td>
     <div class="dropdown">
-      <button class="btn btn-sm" onclick="toggleDropdown(this)">Actions</button>
+      <button class="btn btn-sm" onclick="toggleDropdown(this)">操作</button>
       <div class="dropdown-menu">
-        <a href="/pipelines?edit={esc(name)}">Edit</a>
-        <button onclick="duplicatePipeline('{esc(name)}')">Duplicate</button>
-        <button onclick="setDefault('{esc(name)}')">Set as Default</button>
-        <a href="/api/pipelines/{esc(name)}/yaml" download>Download YAML</a>
+        <a href="/pipelines?edit={esc(name)}">编辑</a>
+        <button onclick="duplicatePipeline('{esc(name)}')">复制</button>
+        <button onclick="setDefault('{esc(name)}')">设为默认</button>
+        <a href="/api/pipelines/{esc(name)}/yaml" download>下载 YAML</a>
         <div class="divider"></div>
-        <button class="danger" onclick="deletePipeline('{esc(name)}')">Delete</button>
+        <button class="danger" onclick="deletePipeline('{esc(name)}')">删除</button>
       </div>
     </div>
   </td>
@@ -39,30 +39,30 @@ def render_pipelines(
         table = f"""\
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Name</th><th>Agents</th><th>Status</th><th>Actions</th></tr></thead>
+  <thead><tr><th>名称</th><th>代理数</th><th>状态</th><th>操作</th></tr></thead>
   <tbody>{"".join(rows)}</tbody>
 </table>
 </div>"""
     else:
         table = """\
 <div class="empty-state">
-  <div class="title">No pipelines yet</div>
-  <div class="desc">Create your first pipeline to get started.</div>
+  <div class="title">暂无流水线</div>
+  <div class="desc">创建第一条流水线来开始使用。</div>
 </div>"""
 
     # Create section
     create_section = """\
 <div class="card">
-  <h3>Create Pipeline</h3>
+  <h3>创建流水线</h3>
   <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;">
     <div class="form-group" style="flex:1;min-width:200px;">
-      <label for="newName">Pipeline name</label>
+      <label for="newName">流水线名称</label>
       <input id="newName" type="text" placeholder="my-pipeline"
              onkeydown="if(event.key==='Enter')createPipeline('template')">
     </div>
     <div style="display:flex;gap:8px;align-items:flex-end;">
-      <button class="btn btn-primary" onclick="createPipeline('template')">From Template</button>
-      <button class="btn" onclick="createPipeline('blank')">Blank</button>
+      <button class="btn btn-primary" onclick="createPipeline('template')">从模板创建</button>
+      <button class="btn" onclick="createPipeline('blank')">空白</button>
     </div>
   </div>
 </div>"""
@@ -73,11 +73,11 @@ def render_pipelines(
         editor_section = f"""\
 <div class="card" style="border-color:var(--accent);">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3>Editing: {esc(edit_name)}</h3>
+    <h3>编辑: {esc(edit_name)}</h3>
     <div style="display:flex;gap:8px;">
-      <button class="btn btn-sm" onclick="validateYaml()">Validate</button>
-      <button class="btn btn-sm btn-primary" onclick="saveFromCurrentTab()">Save</button>
-      <a class="btn btn-sm" href="/pipelines">Close</a>
+      <button class="btn btn-sm" onclick="validateYaml()">校验</button>
+      <button class="btn btn-sm btn-primary" onclick="saveFromCurrentTab()">保存</button>
+      <a class="btn btn-sm" href="/pipelines">关闭</a>
     </div>
   </div>
   <div id="validationResult" style="margin-bottom:8px;"></div>
@@ -85,17 +85,17 @@ def render_pipelines(
   <!-- Editor Tabs -->
   <div class="tabs" style="margin-bottom:0;">
     <label class="tab" style="padding:8px 20px;cursor:pointer;border-bottom:2px solid var(--accent);color:var(--accent);"
-           id="tabVisual" onclick="switchEditorTab('visual')">Visual Editor</label>
+           id="tabVisual" onclick="switchEditorTab('visual')">可视化编辑器</label>
     <label class="tab" style="padding:8px 20px;cursor:pointer;"
-           id="tabYaml" onclick="switchEditorTab('yaml')">YAML Editor</label>
+           id="tabYaml" onclick="switchEditorTab('yaml')">YAML 编辑器</label>
   </div>
 
   <!-- Visual Editor Panel -->
   <div id="panelVisual" style="margin-top:16px;">
     <div id="agentCards">
-      <div style="text-align:center;color:var(--text-dim);padding:24px;">Loading agents...</div>
+      <div style="text-align:center;color:var(--text-dim);padding:24px;">加载代理中...</div>
     </div>
-    <button class="btn btn-primary" onclick="showAgentForm(null)" style="margin-top:12px;">+ Add Agent</button>
+    <button class="btn btn-primary" onclick="showAgentForm(null)" style="margin-top:12px;">+ 添加代理</button>
   </div>
 
   <!-- YAML Editor Panel -->
@@ -107,19 +107,19 @@ def render_pipelines(
 <!-- Agent Edit Modal -->
 <div class="modal-overlay" id="agentModal">
   <div class="modal modal-lg">
-    <h3 id="agentModalTitle">Add Agent</h3>
+    <h3 id="agentModalTitle">添加代理</h3>
     <form id="agentForm" onsubmit="return false;">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
         <div class="form-group">
-          <label>Agent ID *</label>
+          <label>代理 ID *</label>
           <input id="af_id" type="text" placeholder="my-agent" required>
         </div>
         <div class="form-group">
-          <label>Name</label>
-          <input id="af_name" type="text" placeholder="My Agent">
+          <label>名称</label>
+          <input id="af_name" type="text" placeholder="我的代理">
         </div>
         <div class="form-group">
-          <label>Runtime</label>
+          <label>运行时</label>
           <select id="af_runtime">
             <option value="claude">Claude</option>
             <option value="gemini">Gemini</option>
@@ -128,15 +128,15 @@ def render_pipelines(
         </div>
       </div>
       <div class="form-group">
-        <label>System Prompt</label>
-        <textarea id="af_prompt" rows="4" placeholder="You are a helpful agent. Task: {{{{ input }}}}"></textarea>
+        <label>系统提示词</label>
+        <textarea id="af_prompt" rows="4" placeholder="你是一个有用的代理。任务：{{{{ input }}}}}"></textarea>
       </div>
 
       <!-- Handoffs -->
       <div style="margin-top:12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <label style="font-weight:600;font-size:13px;color:var(--text-dim);">Handoffs</label>
-          <button type="button" class="btn btn-sm" onclick="addHandoffRow()">+ Add</button>
+          <label style="font-weight:600;font-size:13px;color:var(--text-dim);">交接</label>
+          <button type="button" class="btn btn-sm" onclick="addHandoffRow()">+ 添加</button>
         </div>
         <div id="handoffRows" style="margin-top:8px;"></div>
       </div>
@@ -144,27 +144,27 @@ def render_pipelines(
       <!-- Gate -->
       <div style="margin-top:16px;">
         <label style="font-size:13px;color:var(--text-dim);cursor:pointer;">
-          <input type="checkbox" id="af_gateEnabled" onchange="document.getElementById('gateFields').style.display=this.checked?'block':'none'"> Enable Gate
+          <input type="checkbox" id="af_gateEnabled" onchange="document.getElementById('gateFields').style.display=this.checked?'block':'none'"> 启用审批门
         </label>
         <div id="gateFields" style="display:none;margin-top:8px;">
           <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;">
             <div class="form-group">
-              <label>Type</label>
-              <select id="af_gateType"><option value="llm">LLM</option><option value="human">Human</option></select>
+              <label>类型</label>
+              <select id="af_gateType"><option value="llm">LLM</option><option value="human">人工</option></select>
             </div>
             <div class="form-group">
-              <label>Prompt</label>
-              <input id="af_gatePrompt" type="text" placeholder="Is this output production-ready?">
+              <label>提示词</label>
+              <input id="af_gatePrompt" type="text" placeholder="这个输出是否可以投产?">
             </div>
           </div>
         </div>
       </div>
 
       <div style="display:flex;gap:8px;margin-top:20px;">
-        <button type="button" class="btn btn-primary" onclick="saveAgent()">Save Agent</button>
-        <button type="button" class="btn" onclick="closeAgentModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveAgent()">保存代理</button>
+        <button type="button" class="btn" onclick="closeAgentModal()">取消</button>
         <button type="button" class="btn btn-red" id="deleteAgentBtn" style="margin-left:auto;display:none;"
-                onclick="deleteAgent()">Delete</button>
+                onclick="deleteAgent()">删除</button>
       </div>
     </form>
   </div>
@@ -194,7 +194,7 @@ async function saveFromCurrentTab() {{
   if (currentTab === 'yaml') {{
     await savePipelineYaml();
   }}
-  showToast('Pipeline saved');
+  showToast('流水线已保存');
 }}
 
 /* ── Load agent cards ──────────────────────── */
@@ -204,14 +204,14 @@ async function loadAgentCards() {{
     const agents = await apiFetch('/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/agents');
     renderAgentCards(agents);
   }} catch(e) {{
-    document.getElementById('agentCards').innerHTML = '<div style="color:var(--red);padding:12px;">Failed to load agents</div>';
+    document.getElementById('agentCards').innerHTML = '<div style="color:var(--red);padding:12px;">加载代理失败</div>';
   }}
 }}
 
 function renderAgentCards(agents) {{
   const container = document.getElementById('agentCards');
   if (!agents.length) {{
-    container.innerHTML = '<div class="empty-state" style="padding:24px;"><div class="title">No agents</div><div class="desc">Add your first agent to get started.</div></div>';
+    container.innerHTML = '<div class="empty-state" style="padding:24px;"><div class="title">暂无代理</div><div class="desc">添加第一个代理来开始使用。</div></div>';
     return;
   }}
   container.innerHTML = agents.map((a, i) => {{
@@ -236,8 +236,8 @@ function renderAgentCards(agents) {{
           ${{handoffs ? '<div style="margin-top:6px;">' + handoffs + '</div>' : ''}}
         </div>
         <div style="display:flex;gap:4px;flex-shrink:0;">
-          <button class="btn btn-sm" onclick="editAgent('${{a.id}}')">Edit</button>
-          <button class="btn btn-sm" style="color:var(--red);" onclick="confirmDeleteAgent('${{a.id}}')">Delete</button>
+          <button class="btn btn-sm" onclick="editAgent('${{a.id}}')">编辑</button>
+          <button class="btn btn-sm" style="color:var(--red);" onclick="confirmDeleteAgent('${{a.id}}')">删除</button>
         </div>
       </div>
     </div>`;
@@ -256,7 +256,7 @@ async function loadYamlContent() {{
 /* ── Agent form ────────────────────────────── */
 function showAgentForm(agentId) {{
   editingAgentId = agentId;
-  document.getElementById('agentModalTitle').textContent = agentId ? 'Edit Agent' : 'Add Agent';
+  document.getElementById('agentModalTitle').textContent = agentId ? '编辑代理' : '添加代理';
   document.getElementById('deleteAgentBtn').style.display = agentId ? 'inline-block' : 'none';
   // Clear form
   document.getElementById('af_id').value = '';
@@ -306,7 +306,7 @@ function addHandoffRow(to, condition) {{
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center;';
   row.innerHTML = `
-    <input type="text" class="ho-to" value="${{to||''}}" placeholder="Target agent ID" style="flex:1;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);">
+    <input type="text" class="ho-to" value="${{to||''}}" placeholder="目标代理 ID" style="flex:1;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);">
     <select class="ho-cond" style="padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);">
       <option value="always" ${{(condition||'always')==='always'?'selected':''}}>always</option>
       <option value="on_approve" ${{condition==='on_approve'?'selected':''}}>on_approve</option>
@@ -321,7 +321,7 @@ function addHandoffRow(to, condition) {{
 /* ── Save agent ────────────────────────────── */
 async function saveAgent() {{
   const id = document.getElementById('af_id').value.trim();
-  if (!id) {{ showToast('Agent ID is required', 'error'); return; }}
+  if (!id) {{     showToast('代理 ID 必填', 'error'); return; }}
 
   const body = {{
     id: id,
@@ -351,7 +351,7 @@ async function saveAgent() {{
 
   try {{
     await apiFetch(url, {{method, body:JSON.stringify(body)}});
-    showToast(editingAgentId ? 'Agent updated' : 'Agent added');
+    showToast(editingAgentId ? '代理已更新' : '代理已添加');
     closeAgentModal();
     loadAgentCards();
   }} catch(e) {{}}
@@ -359,19 +359,19 @@ async function saveAgent() {{
 
 /* ── Delete agent ──────────────────────────── */
 async function deleteAgent() {{
-  if (!editingAgentId || !confirm('Delete agent "' + editingAgentId + '"?')) return;
+  if (!editingAgentId || !confirm('删除代理 "' + editingAgentId + '"?')) return;
   try {{
     await apiFetch('/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/agents/' + encodeURIComponent(editingAgentId), {{method:'DELETE'}});
-    showToast('Agent deleted');
+    showToast('代理已删除');
     closeAgentModal();
     loadAgentCards();
   }} catch(e) {{}}
 }}
 async function confirmDeleteAgent(agentId) {{
-  if (!confirm('Delete agent "' + agentId + '"?')) return;
+  if (!confirm('删除代理 "' + agentId + '"?')) return;
   try {{
     await apiFetch('/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/agents/' + encodeURIComponent(agentId), {{method:'DELETE'}});
-    showToast('Agent deleted');
+    showToast('代理已删除');
     loadAgentCards();
   }} catch(e) {{}}
 }}
@@ -379,13 +379,13 @@ async function confirmDeleteAgent(agentId) {{
 /* ── Pipeline CRUD ─────────────────────────── */
 async function createPipeline(mode) {{
   const name = document.getElementById('newName').value.trim();
-  if (!name) {{ showToast('Enter a pipeline name', 'error'); return; }}
+  if (!name) {{ showToast('请输入流水线名称', 'error'); return; }}
   const content = mode === 'template'
     ? 'agents:\\n  - id: planner\\n    name: Planner\\n    runtime: claude\\n    system_prompt: "Plan: {{{{ input }}}}"\\n    handoffs:\\n      - to: developer\\n\\n  - id: developer\\n    name: Developer\\n    runtime: claude\\n    system_prompt: "Build: {{{{ input }}}}"\\n'
     : 'agents:\\n  - id: agent_1\\n    name: Agent 1\\n    runtime: claude\\n    system_prompt: "{{{{ input }}}}"\\n';
   try {{
     await apiFetch('/api/pipelines', {{method:'POST', body:JSON.stringify({{name, content}})}});
-    showToast('Pipeline created');
+    showToast('流水线已创建');
     location.href = '/pipelines?edit=' + encodeURIComponent(name);
   }} catch(e) {{}}
 }}
@@ -409,33 +409,33 @@ async function validateYaml() {{
     const el = document.getElementById('validationResult');
     if (r.valid) {{
       const count = (r.summary && r.summary.agent_count) || r.agent_count || 0;
-      el.innerHTML = '<span style="color:var(--green);">\\u2713 Valid (' + count + ' agents)</span>';
+      el.innerHTML = '<span style="color:var(--green);">\\u2713 有效 (' + count + ' 个代理)</span>';
     }} else {{
       el.innerHTML = '<span style="color:var(--red);">\\u2717 ' + (r.errors||[]).map(e=>e.message||e).join(', ') + '</span>';
     }}
   }} catch(e) {{}}
 }}
 async function deletePipeline(name) {{
-  if (!confirm('Delete pipeline "' + name + '"?')) return;
+  if (!confirm('删除流水线 "' + name + '"?')) return;
   try {{
     await apiFetch('/api/pipelines/' + encodeURIComponent(name), {{method:'DELETE'}});
-    showToast('Pipeline deleted');
+    showToast('流水线已删除');
     location.reload();
   }} catch(e) {{}}
 }}
 async function duplicatePipeline(name) {{
-  const newName = prompt('New pipeline name:');
+  const newName = prompt('新流水线名称:');
   if (!newName) return;
   try {{
     await apiFetch('/api/pipelines/' + encodeURIComponent(name) + '/duplicate', {{method:'POST', body:JSON.stringify({{new_name:newName}})}});
-    showToast('Pipeline duplicated');
+    showToast('流水线已复制');
     location.reload();
   }} catch(e) {{}}
 }}
 async function setDefault(name) {{
   try {{
     await apiFetch('/api/pipelines/default', {{method:'POST', body:JSON.stringify({{name}})}});
-    showToast('Default set to ' + name);
+    showToast('默认已设为 ' + name);
     location.reload();
   }} catch(e) {{}}
 }}
@@ -445,11 +445,11 @@ if (EDIT_PIPELINE) setTimeout(loadAgentCards, 50);
 </script>"""
 
     body = (
-        f"<h1>Pipelines</h1>\n"
+        f"<h1>流水线</h1>\n"
         f"{create_section}\n"
         f"{editor_section}\n"
         f"{table}\n"
         f"{js}"
     )
 
-    return layout("Pipelines", body, active="pipelines")
+    return layout("流水线", body, active="pipelines")

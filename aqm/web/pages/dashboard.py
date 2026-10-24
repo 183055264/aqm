@@ -29,10 +29,10 @@ def render_dashboard(
         )
         pipeline_selector = f"""\
 <div class="card" style="margin-bottom:16px;padding:12px 16px;display:flex;align-items:center;gap:12px;">
-  <label style="font-weight:600;white-space:nowrap;">Pipeline:</label>
+  <label style="font-weight:600;white-space:nowrap;">流水线:</label>
   <select id="pipelineSelector" onchange="location.href='/?pipeline='+this.value"
           style="flex:1;max-width:300px;">{pipe_options}</select>
-  <span style="font-size:12px;opacity:.6;">{len(pipelines)} pipeline(s)</span>
+  <span style="font-size:12px;opacity:.6;">{len(pipelines)} 条流水线</span>
 </div>"""
 
     error_banner = ""
@@ -40,7 +40,7 @@ def render_dashboard(
         error_banner = (
             f'<div class="card" style="background:var(--surface2);border-left:4px solid var(--orange);'
             f'padding:12px 16px;margin-bottom:16px;">'
-            f'<strong style="color:var(--orange);">Warning: Pipeline configuration error</strong>'
+            f'<strong style="color:var(--orange);">警告: 流水线配置错误</strong>'
             f'<p style="margin:6px 0 0;font-size:13px;opacity:.85;">{esc(agent_error)}</p>'
             f'</div>'
         )
@@ -49,11 +49,11 @@ def render_dashboard(
 {pipeline_selector}
 {error_banner}
 <div class="stats" id="statsCards">
-  <div class="stat-card"><div class="value" id="statTotal">{total}</div><div class="label">Total</div></div>
-  <div class="stat-card blue"><div class="value" id="statRunning">{running}</div><div class="label">Running</div></div>
-  <div class="stat-card green"><div class="value" id="statCompleted">{completed}</div><div class="label">Completed</div></div>
-  <div class="stat-card red"><div class="value" id="statFailed">{failed}</div><div class="label">Failed</div></div>
-  <div class="stat-card orange"><div class="value" id="statAwaiting">{awaiting}</div><div class="label">Awaiting Gate</div></div>
+  <div class="stat-card"><div class="value" id="statTotal">{total}</div><div class="label">总计</div></div>
+  <div class="stat-card blue"><div class="value" id="statRunning">{running}</div><div class="label">运行中</div></div>
+  <div class="stat-card green"><div class="value" id="statCompleted">{completed}</div><div class="label">已完成</div></div>
+  <div class="stat-card red"><div class="value" id="statFailed">{failed}</div><div class="label">失败</div></div>
+  <div class="stat-card orange"><div class="value" id="statAwaiting">{awaiting}</div><div class="label">等待审批</div></div>
 </div>"""
 
     # Agent options for dropdown
@@ -69,28 +69,28 @@ def render_dashboard(
     # Run pipeline form
     form = f"""\
 <div class="card">
-  <h3>Run Pipeline</h3>
+  <h3>运行流水线</h3>
   <form id="runForm" style="margin-top:12px;">
     <div class="form-group">
-      <label for="runDesc">Task description</label>
-      <textarea id="runDesc" placeholder="Describe what you want the pipeline to do..."></textarea>
+      <label for="runDesc">任务描述</label>
+      <textarea id="runDesc" placeholder="描述你希望流水线执行的任务..."></textarea>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
       <div class="form-group">
-        <label for="runAgent">Starting agent</label>
-        <select id="runAgent"><option value="">Default (first agent)</option>{agent_options}</select>
+        <label for="runAgent">起始代理</label>
+        <select id="runAgent"><option value="">默认 (第一个代理)</option>{agent_options}</select>
       </div>
       <div class="form-group">
-        <label for="runPriority">Priority</label>
+        <label for="runPriority">优先级</label>
         <select id="runPriority">
-          <option value="critical">Critical</option>
-          <option value="high">High</option>
-          <option value="normal" selected>Normal</option>
-          <option value="low">Low</option>
+          <option value="critical">紧急</option>
+          <option value="high">高</option>
+          <option value="normal" selected>普通</option>
+          <option value="low">低</option>
         </select>
       </div>
     </div>
-    <button type="submit" class="btn btn-primary">Start Run</button>
+    <button type="submit" class="btn btn-primary">开始运行</button>
   </form>
 </div>"""
 
@@ -98,49 +98,49 @@ def render_dashboard(
     filter_bar = f"""\
 <div class="filter-bar">
   <div class="form-group">
-    <label>Status</label>
+    <label>状态</label>
     <select id="filterStatus" onchange="applyFilters()" style="width:140px;">
-      <option value="">All</option>
-      <option value="pending">Pending</option>
-      <option value="in_progress">Running</option>
-      <option value="completed">Completed</option>
-      <option value="failed">Failed</option>
-      <option value="awaiting_gate">Awaiting Gate</option>
-      <option value="awaiting_human_input">Awaiting Input</option>
-      <option value="cancelled">Cancelled</option>
-      <option value="stalled">Stalled</option>
+      <option value="">全部</option>
+      <option value="pending">待处理</option>
+      <option value="in_progress">运行中</option>
+      <option value="completed">已完成</option>
+      <option value="failed">失败</option>
+      <option value="awaiting_gate">等待审批</option>
+      <option value="awaiting_human_input">等待输入</option>
+      <option value="cancelled">已取消</option>
+      <option value="stalled">停滞</option>
     </select>
   </div>
   <div class="form-group">
-    <label>Agent</label>
+    <label>代理</label>
     <select id="filterAgent" onchange="applyFilters()" style="width:140px;">
-      <option value="">All</option>
+      <option value="">全部</option>
       {agent_filter_options}
     </select>
   </div>
   <div class="form-group">
-    <label>Priority</label>
+    <label>优先级</label>
     <select id="filterPriority" onchange="applyFilters()" style="width:120px;">
-      <option value="">All</option>
-      <option value="critical">Critical</option>
-      <option value="high">High</option>
-      <option value="normal">Normal</option>
-      <option value="low">Low</option>
+      <option value="">全部</option>
+      <option value="critical">紧急</option>
+      <option value="high">高</option>
+      <option value="normal">普通</option>
+      <option value="low">低</option>
     </select>
   </div>
   <div class="form-group flex-1">
-    <label>Search</label>
-    <input id="filterSearch" type="text" placeholder="Search descriptions..." oninput="applyFilters()">
+    <label>搜索</label>
+    <input id="filterSearch" type="text" placeholder="搜索描述..." oninput="applyFilters()">
   </div>
 </div>"""
 
     # Batch action bar
     batch_bar = """\
 <div class="batch-bar" id="batchBar">
-  <span class="count" id="batchCount">0 selected</span>
-  <button class="btn btn-sm btn-red" onclick="batchCancel()">Cancel Selected</button>
-  <button class="btn btn-sm" onclick="batchRestart()">Restart Selected</button>
-  <button class="btn btn-sm" onclick="clearSelection()">Clear</button>
+  <span class="count" id="batchCount">已选择 0 项</span>
+  <button class="btn btn-sm btn-red" onclick="batchCancel()">取消选中</button>
+  <button class="btn btn-sm" onclick="batchRestart()">重启选中</button>
+  <button class="btn btn-sm" onclick="clearSelection()">清除</button>
 </div>"""
 
     # Task table
@@ -148,10 +148,10 @@ def render_dashboard(
         table_body = """\
 <div class="empty-state">
   <div class="icon">📋</div>
-  <div class="title">No tasks yet</div>
-  <div class="desc">Run a pipeline above to create your first task.</div>
+  <div class="title">暂无任务</div>
+  <div class="desc">在上方运行一条流水线来创建第一个任务。</div>
 </div>"""
-        table = f'<h2 style="margin-top:24px;">Tasks</h2>\n{table_body}'
+        table = f'<h2 style="margin-top:24px;">任务</h2>\n{table_body}'
     else:
         row_list = []
         for t in tasks:
@@ -162,15 +162,15 @@ def render_dashboard(
             p_name = t.priority.name
 
             # Quick actions dropdown
-            actions_items = f'<a href="/tasks/{esc(t.id)}">View</a>'
+            actions_items = f'<a href="/tasks/{esc(t.id)}">查看</a>'
             if t.status in (TaskStatus.completed, TaskStatus.failed):
-                actions_items += f'<button onclick="showFixForm(\'{esc(t.id)}\')">Fix</button>'
+                actions_items += f'<button onclick="showFixForm(\'{esc(t.id)}\')">修复</button>'
             if t.status in (TaskStatus.failed, TaskStatus.completed, TaskStatus.stalled, TaskStatus.cancelled):
-                actions_items += f'<button onclick="restartTask(\'{esc(t.id)}\')">Restart</button>'
+                actions_items += f'<button onclick="restartTask(\'{esc(t.id)}\')">重启</button>'
             if t.status == TaskStatus.awaiting_gate:
-                actions_items += f'<a href="/tasks/{esc(t.id)}">Approve/Reject</a>'
+                actions_items += f'<a href="/tasks/{esc(t.id)}">审批/拒绝</a>'
             if t.status in (TaskStatus.pending, TaskStatus.in_progress, TaskStatus.awaiting_gate, TaskStatus.awaiting_human_input):
-                actions_items += f'<div class="divider"></div><button class="danger" onclick="showCancelModal(\'{esc(t.id)}\')">Cancel</button>'
+                actions_items += f'<div class="divider"></div><button class="danger" onclick="showCancelModal(\'{esc(t.id)}\')">取消</button>'
 
             row_list.append(
                 f'<tr data-status="{esc(t.status.value)}" data-agent="{agent}" '
@@ -185,16 +185,16 @@ def render_dashboard(
                 f'<td>{len(t.stages)}</td>'
                 f'<td style="font-size:12px;">{fmt_time(t.created_at)}</td>'
                 f'<td>'
-                f'<div class="dropdown">'
-                f'<button class="btn btn-sm" onclick="toggleDropdown(this)">Actions</button>'
-                f'<div class="dropdown-menu">{actions_items}</div>'
+                 f'<div class="dropdown">'
+                 f'<button class="btn btn-sm" onclick="toggleDropdown(this)">操作</button>'
+                 f'<div class="dropdown-menu">{actions_items}</div>'
                 f'</div></td>'
                 f'</tr>'
             )
         rows = "\n".join(row_list)
 
         table = f"""\
-<h2 style="margin-top:24px;">Tasks</h2>
+<h2 style="margin-top:24px;">任务</h2>
 {filter_bar}
 {batch_bar}
 <div class="table-wrap">
@@ -202,13 +202,13 @@ def render_dashboard(
 <thead><tr>
   <th style="width:32px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
   <th data-sort="id">ID <span class="sort-icon"></span></th>
-  <th data-sort="status">Status <span class="sort-icon"></span></th>
-  <th data-sort="priority">Priority <span class="sort-icon"></span></th>
-  <th data-sort="agent">Agent <span class="sort-icon"></span></th>
-  <th>Description</th>
-  <th data-sort="stages">Stages <span class="sort-icon"></span></th>
-  <th data-sort="created">Created <span class="sort-icon"></span></th>
-  <th>Actions</th>
+  <th data-sort="status">状态 <span class="sort-icon"></span></th>
+  <th data-sort="priority">优先级 <span class="sort-icon"></span></th>
+  <th data-sort="agent">代理 <span class="sort-icon"></span></th>
+  <th>描述</th>
+  <th data-sort="stages">阶段 <span class="sort-icon"></span></th>
+  <th data-sort="created">创建时间 <span class="sort-icon"></span></th>
+  <th>操作</th>
 </tr></thead>
 <tbody id="taskBody">{rows}</tbody>
 </table>
@@ -219,15 +219,15 @@ def render_dashboard(
     cancel_modal = """\
 <div class="modal-overlay" id="cancelModal">
   <div class="modal modal-sm">
-    <h3>Cancel Task</h3>
+    <h3>取消任务</h3>
     <input type="hidden" id="cancelTaskId">
     <div class="form-group">
-      <label for="cancelReason">Reason (optional)</label>
-      <input id="cancelReason" type="text" placeholder="Why are you cancelling?">
+      <label for="cancelReason">原因 (可选)</label>
+      <input id="cancelReason" type="text" placeholder="为什么要取消?">
     </div>
     <div style="display:flex;gap:8px;margin-top:12px;">
-      <button class="btn btn-red" onclick="confirmCancel()">Cancel Task</button>
-      <button class="btn" onclick="document.getElementById('cancelModal').classList.remove('show')">Close</button>
+      <button class="btn btn-red" onclick="confirmCancel()">取消任务</button>
+      <button class="btn" onclick="document.getElementById('cancelModal').classList.remove('show')">关闭</button>
     </div>
   </div>
 </div>"""
@@ -236,15 +236,15 @@ def render_dashboard(
     fix_modal = """\
 <div class="modal-overlay" id="fixModal">
   <div class="modal">
-    <h3>Fix Task <span id="fixTaskId"></span></h3>
+    <h3>修复任务 <span id="fixTaskId"></span></h3>
     <form id="fixForm">
       <input type="hidden" id="fixParentId">
       <div class="form-group">
-        <label for="fixDesc">What needs to be fixed?</label>
-        <textarea id="fixDesc" placeholder="Describe the fix..."></textarea>
+        <label for="fixDesc">需要修复什么?</label>
+        <textarea id="fixDesc" placeholder="描述需要修复的内容..."></textarea>
       </div>
-      <button type="submit" class="btn btn-primary">Start Fix</button>
-      <button type="button" class="btn" onclick="document.getElementById('fixModal').classList.remove('show')">Cancel</button>
+      <button type="submit" class="btn btn-primary">开始修复</button>
+      <button type="button" class="btn" onclick="document.getElementById('fixModal').classList.remove('show')">取消</button>
     </form>
   </div>
 </div>"""
@@ -263,12 +263,12 @@ document.getElementById('runForm').addEventListener('submit', async (e) => {
   if (agent) body.agent_id = agent;
   if (pipelineSel) body.pipeline = pipelineSel.value;
   const btn = e.target.querySelector('button[type=submit]');
-  btn.disabled = true; btn.textContent = 'Starting...';
-  try {
-    const data = await apiFetch('/api/run', {method:'POST', body:JSON.stringify(body)});
-    showToast('Pipeline started: ' + data.task_id);
-    setTimeout(() => location.href = '/tasks/' + data.task_id, 600);
-  } catch(err) { btn.disabled = false; btn.textContent = 'Start Run'; }
+    btn.disabled = true; btn.textContent = '启动中...';
+    try {
+      const data = await apiFetch('/api/run', {method:'POST', body:JSON.stringify(body)});
+      showToast('流水线已启动: ' + data.task_id);
+      setTimeout(() => location.href = '/tasks/' + data.task_id, 600);
+    } catch(err) { btn.disabled = false; btn.textContent = '开始运行'; }
 });
 
 /* ── Fix modal ─────────────────────────────── */
@@ -284,7 +284,7 @@ document.getElementById('fixForm')?.addEventListener('submit', async (e) => {
   if (!desc) return;
   try {
     const data = await apiFetch('/api/fix', {method:'POST', body:JSON.stringify({parent_task_id:parentId, description:desc})});
-    showToast('Fix started: ' + data.task_id);
+      showToast('修复已启动: ' + data.task_id);
     setTimeout(() => location.href = '/tasks/' + data.task_id, 600);
   } catch(err) {}
 });
@@ -304,7 +304,7 @@ async function confirmCancel() {
   const body = reason ? {reason} : {};
   try {
     await apiFetch('/api/tasks/' + taskId + '/cancel', {method:'POST', body:JSON.stringify(body)});
-    showToast('Task cancelled');
+    showToast('任务已取消');
     document.getElementById('cancelModal').classList.remove('show');
     setTimeout(() => location.reload(), 600);
   } catch(e) {}
@@ -314,7 +314,7 @@ async function confirmCancel() {
 async function restartTask(taskId) {
   try {
     await apiFetch('/api/tasks/' + taskId + '/restart', {method:'POST', body:'{}'});
-    showToast('Task restarting');
+    showToast('任务重启中');
     setTimeout(() => location.href = '/tasks/' + taskId, 600);
   } catch(e) {}
 }
@@ -370,12 +370,12 @@ function paginate() {
   });
   const pag = document.getElementById('pagination');
   if (!pag || rows.length <= PAGE_SIZE) { if(pag) pag.innerHTML = ''; return; }
-  let html = '<button '+(currentPage<=1?'disabled':'')+' onclick="goPage('+(currentPage-1)+')">Prev</button>';
+  let html = '<button '+(currentPage<=1?'disabled':'')+' onclick="goPage('+(currentPage-1)+')">上一页</button>';
   for (let p = 1; p <= totalPages; p++) {
     html += '<button class="'+(p===currentPage?'active':'')+'" onclick="goPage('+p+')">'+p+'</button>';
   }
-  html += '<button '+(currentPage>=totalPages?'disabled':'')+' onclick="goPage('+(currentPage+1)+')">Next</button>';
-  html += '<span class="info">'+rows.length+' task(s)</span>';
+  html += '<button '+(currentPage>=totalPages?'disabled':'')+' onclick="goPage('+(currentPage+1)+')">下一页</button>';
+  html += '<span class="info">'+rows.length+' 个任务</span>';
   pag.innerHTML = html;
 }
 function goPage(p) { currentPage = p; applyFilters(); }
@@ -393,7 +393,7 @@ function updateBatch() {
   if (!bar) return;
   if (checked.length > 0) {
     bar.classList.add('show');
-    document.getElementById('batchCount').textContent = checked.length + ' selected';
+    document.getElementById('batchCount').textContent = checked.length + ' 项已选择';
   } else {
     bar.classList.remove('show');
   }
@@ -409,20 +409,20 @@ function clearSelection() {
 }
 async function batchCancel() {
   const ids = getSelectedIds();
-  if (!ids.length || !confirm('Cancel ' + ids.length + ' task(s)?')) return;
+  if (!ids.length || !confirm('取消 ' + ids.length + ' 个任务?')) return;
   for (const id of ids) {
     try { await apiFetch('/api/tasks/' + id + '/cancel', {method:'POST', body:'{}'}); } catch(e) {}
   }
-  showToast(ids.length + ' task(s) cancelled');
+  showToast('已取消 ' + ids.length + ' 个任务');
   setTimeout(() => location.reload(), 600);
 }
 async function batchRestart() {
   const ids = getSelectedIds();
-  if (!ids.length || !confirm('Restart ' + ids.length + ' task(s)?')) return;
+  if (!ids.length || !confirm('重启 ' + ids.length + ' 个任务?')) return;
   for (const id of ids) {
     try { await apiFetch('/api/tasks/' + id + '/restart', {method:'POST', body:'{}'}); } catch(e) {}
   }
-  showToast(ids.length + ' task(s) restarting');
+  showToast('正在重启 ' + ids.length + ' 个任务');
   setTimeout(() => location.reload(), 600);
 }
 
@@ -445,7 +445,7 @@ paginate();
 </script>"""
 
     return layout(
-        "Dashboard",
-        f"<h1>Dashboard</h1>\n{stats}\n{form}\n{table}\n{cancel_modal}\n{fix_modal}\n{js}",
+        "看板",
+        f"<h1>看板</h1>\n{stats}\n{form}\n{table}\n{cancel_modal}\n{fix_modal}\n{js}",
         active="tasks",
     )

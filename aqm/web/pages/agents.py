@@ -148,7 +148,7 @@ GRAPH_JS = """\
     html += `<div class="agent-id">${n.id} · ${n.runtime || n.type}</div>`;
     if (n.gate) {
       const cls = n.gate.type === 'llm' ? 'gate-llm' : 'gate-human';
-      html += `<span class="gate-badge ${cls}">${n.gate.type} gate</span>`;
+      html += `<span class="gate-badge ${cls}">${n.gate.type} 审批门</span>`;
     }
     if (n.mcp.length > 0) {
       html += `<div>` + n.mcp.map(m => `<span class="mcp-item">${m}</span>`).join('') + `</div>`;
@@ -186,19 +186,19 @@ GRAPH_JS = """\
 
     let html = `<h3 style="color:var(--accent);margin-bottom:16px;">${n.name}</h3>`;
     html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">ID:</span> ${n.id}</div></div>`;
-    html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">Runtime:</span> ${n.runtime || n.type}</div></div>`;
-    html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">Context:</span> ${n.context_strategy}</div></div>`;
-    if (n.gate) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">Gate:</span> ${n.gate.type} — ${(n.gate.prompt||'').substring(0,100)}</div></div>`;
-    if (n.human_input) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">Human Input:</span> ${n.human_input.mode}</div></div>`;
+    html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">运行时:</span> ${n.runtime || n.type}</div></div>`;
+    html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">上下文:</span> ${n.context_strategy}</div></div>`;
+    if (n.gate) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">审批门:</span> ${n.gate.type} — ${(n.gate.prompt||'').substring(0,100)}</div></div>`;
+    if (n.human_input) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">人工输入:</span> ${n.human_input.mode}</div></div>`;
     if (n.mcp.length) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">MCP:</span> ${n.mcp.join(', ')}</div></div>`;
     if (n.handoffs_raw.length) {
-      html += `<h4 style="margin-top:16px;margin-bottom:8px;">Handoffs</h4>`;
+      html += `<h4 style="margin-top:16px;margin-bottom:8px;">交接</h4>`;
       n.handoffs_raw.forEach(h => {
         html += `<div style="font-size:13px;padding:4px 0;color:var(--text-dim);">→ ${h.to} <span class="badge badge-${h.condition}">${h.condition}</span></div>`;
       });
     }
     if (n.system_prompt_preview) {
-      html += `<h4 style="margin-top:16px;margin-bottom:8px;">System Prompt</h4>`;
+      html += `<h4 style="margin-top:16px;margin-bottom:8px;">系统提示词</h4>`;
       html += `<pre style="font-size:11px;max-height:200px;">${n.system_prompt_preview.replace(/</g,'&lt;')}</pre>`;
     }
 
@@ -258,7 +258,7 @@ def render_agents(
         )
         pipeline_selector = (
             f'<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;">'
-            f'<label style="font-weight:600;">Pipeline:</label>'
+            f'<label style="font-weight:600;">流水线:</label>'
             f'<select onchange="location.href=\'/agents?pipeline=\'+this.value"'
             f' style="max-width:300px;">{pipe_options}</select></div>'
         )
@@ -268,7 +268,7 @@ def render_agents(
         error_banner = (
             f'<div style="background:var(--surface2);border-left:4px solid var(--orange);'
             f'padding:12px 16px;margin-bottom:16px;border-radius:6px;">'
-            f'<strong style="color:var(--orange);">Pipeline configuration error</strong>'
+            f'<strong style="color:var(--orange);">流水线配置错误</strong>'
             f'<p style="margin:6px 0 0;font-size:13px;opacity:.85;">{esc(agent_error)}</p>'
             f'</div>'
         )
@@ -277,11 +277,11 @@ def render_agents(
         body = error_banner or """\
 <div class="empty-state">
   <div class="icon">🤖</div>
-  <div class="title">No agents defined</div>
-  <div class="desc">Create a pipeline with agents to see the visualization.</div>
-  <a href="/pipelines" class="btn btn-primary">Go to Pipelines</a>
+  <div class="title">未定义代理</div>
+  <div class="desc">创建一个包含代理的流水线来查看可视化。</div>
+  <a href="/pipelines" class="btn btn-primary">前往流水线</a>
 </div>"""
-        return layout("Agents", f"<h1>Agent Pipeline</h1>\n{pipeline_selector}{body}", active="agents")
+        return layout("代理", f"<h1>代理流水线</h1>\n{pipeline_selector}{body}", active="agents")
 
     graph_data = _build_graph_data(agents)
     graph_js = GRAPH_JS.replace("GRAPH_DATA_PLACEHOLDER", graph_data)
@@ -295,19 +295,19 @@ def render_agents(
         )
         task_selector = f"""\
 <div style="display:flex;align-items:center;gap:8px;">
-  <label style="font-size:13px;color:var(--text-dim);">Highlight path:</label>
+  <label style="font-size:13px;color:var(--text-dim);">高亮路径:</label>
   <select onchange="highlightPath(this.value)" style="max-width:300px;font-size:13px;">
-    <option value="">None</option>
+    <option value="">无</option>
     {task_options}
   </select>
 </div>"""
 
     graph_section = f"""\
 <div class="graph-controls">
-  <button class="btn btn-sm" onclick="zoomIn()" title="Zoom In">+</button>
-  <button class="btn btn-sm" onclick="zoomOut()" title="Zoom Out">-</button>
-  <button class="btn btn-sm" onclick="zoomReset()" title="Reset">Reset</button>
-  <button class="btn btn-sm" onclick="zoomFit()" title="Fit to View">Fit</button>
+  <button class="btn btn-sm" onclick="zoomIn()" title="放大">+</button>
+  <button class="btn btn-sm" onclick="zoomOut()" title="缩小">-</button>
+  <button class="btn btn-sm" onclick="zoomReset()" title="重置">重置</button>
+  <button class="btn btn-sm" onclick="zoomFit()" title="适应视图">适应</button>
   {task_selector}
 </div>
 <div class="graph-container" id="agentGraph" style="min-height:400px;"></div>
@@ -316,13 +316,13 @@ def render_agents(
     # Agent detail sidebar
     sidebar = """\
 <div class="agent-sidebar" id="agentSidebar">
-  <button class="btn btn-sm close-btn" onclick="closeAgentSidebar()">Close</button>
+  <button class="btn btn-sm close-btn" onclick="closeAgentSidebar()">关闭</button>
   <div id="agentDetailContent"></div>
 </div>"""
 
     return layout(
-        "Agents",
-        f"<h1>Agent Pipeline</h1>\n{pipeline_selector}{error_banner}{graph_section}\n{sidebar}",
+        "代理",
+        f"<h1>代理流水线</h1>\n{pipeline_selector}{error_banner}{graph_section}\n{sidebar}",
         active="agents",
         extra_head=D3_DAGRE_CDN,
     )

@@ -7,21 +7,21 @@ from aqm.web.templates import layout
 
 def render_registry() -> str:
     body = """\
-<h1>Pipeline Registry</h1>
+<h1>流水线注册表</h1>
 
 <div class="card">
-  <h3>Search Pipelines</h3>
+  <h3>搜索流水线</h3>
   <div style="display:flex;gap:8px;margin-top:12px;align-items:flex-end;">
     <div class="form-group" style="flex:1;margin-bottom:0;">
-      <label for="searchQuery">Keyword</label>
-      <input id="searchQuery" type="text" placeholder="e.g. code review, content, data..."
+      <label for="searchQuery">关键词</label>
+      <input id="searchQuery" type="text" placeholder="例如：代码审查、内容、数据..."
              onkeydown="if(event.key==='Enter')searchRegistry()">
     </div>
-    <button class="btn btn-primary" onclick="searchRegistry()" style="height:38px;">Search</button>
+    <button class="btn btn-primary" onclick="searchRegistry()" style="height:38px;">搜索</button>
   </div>
   <div style="margin-top:8px;">
     <label style="font-size:13px;color:var(--text-dim);cursor:pointer;">
-      <input type="checkbox" id="offlineMode" style="margin-right:4px;"> Offline only (local + bundled)
+      <input type="checkbox" id="offlineMode" style="margin-right:4px;"> 仅离线 (本地 + 内置)
     </label>
   </div>
 </div>
@@ -29,26 +29,26 @@ def render_registry() -> str:
 <div id="searchResults" style="margin-top:16px;"></div>
 
 <div class="card" style="margin-top:24px;">
-  <h3>Publish Current Pipeline</h3>
+  <h3>发布当前流水线</h3>
   <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px;">
-    Publish your pipeline to the registry with semantic versioning.
+    将流水线发布到注册表，使用语义化版本管理。
   </p>
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
     <div class="form-group">
-      <label for="pubName">Pipeline name</label>
+      <label for="pubName">流水线名称</label>
       <input id="pubName" type="text" placeholder="my-pipeline">
     </div>
     <div class="form-group">
-      <label for="pubDesc">Description</label>
-      <input id="pubDesc" type="text" placeholder="What this pipeline does...">
+      <label for="pubDesc">描述</label>
+      <input id="pubDesc" type="text" placeholder="这个流水线做什么...">
     </div>
     <div class="form-group">
-      <label for="pubVersion">Version (optional)</label>
+      <label for="pubVersion">版本 (可选)</label>
       <input id="pubVersion" type="text" placeholder="auto-increment">
     </div>
   </div>
-  <button class="btn btn-primary" onclick="publishPipeline(false)">Publish to GitHub</button>
-  <button class="btn" onclick="publishPipeline(true)" style="margin-left:8px;">Save Locally</button>
+  <button class="btn btn-primary" onclick="publishPipeline(false)">发布到 GitHub</button>
+  <button class="btn" onclick="publishPipeline(true)" style="margin-left:8px;">保存到本地</button>
 </div>
 
 <script>
@@ -59,18 +59,18 @@ async function searchRegistry() {
   if (query) params.set('query', query);
   if (offline) params.set('offline', 'true');
 
-  document.getElementById('searchResults').innerHTML =
-    '<div style="text-align:center;color:var(--text-dim);padding:24px;">Searching...</div>';
+    document.getElementById('searchResults').innerHTML =
+      '<div style="text-align:center;color:var(--text-dim);padding:24px;">搜索中...</div>';
 
   try {
     const data = await apiFetch('/api/registry/search?' + params.toString());
     if (!data.length) {
       document.getElementById('searchResults').innerHTML =
-        '<div class="empty-state"><div class="title">No pipelines found</div><div class="desc">Try a different keyword or check the registry.</div></div>';
+        '<div class="empty-state"><div class="title">未找到流水线</div><div class="desc">试试其他关键词或检查注册表。</div></div>';
       return;
     }
     let html = `<div class="table-wrap"><table>
-      <thead><tr><th>Name</th><th>Source</th><th>Version</th><th>Description</th><th>Agents</th><th>Actions</th></tr></thead>
+      <thead><tr><th>名称</th><th>来源</th><th>版本</th><th>描述</th><th>代理数</th><th>操作</th></tr></thead>
       <tbody>`;
     data.forEach(p => {
       const sourceColors = {github:'var(--purple)', bundled:'var(--accent)', local:'var(--green)'};
@@ -91,10 +91,10 @@ async function searchRegistry() {
               ${options}
             </select>
             <button class="btn btn-sm btn-primary" onclick="pullPipeline('${p.name}',
-              document.getElementById('ver-${p.name}').value)">Pull</button>
+              document.getElementById('ver-${p.name}').value)">拉取</button>
           </div>`;
       } else {
-        pullHtml = `<button class="btn btn-sm btn-primary" onclick="pullPipeline('${p.name}','${latestVersion}')">Pull</button>`;
+        pullHtml = `<button class="btn btn-sm btn-primary" onclick="pullPipeline('${p.name}','${latestVersion}')">拉取</button>`;
       }
 
       html += `<tr>
@@ -110,20 +110,20 @@ async function searchRegistry() {
     document.getElementById('searchResults').innerHTML = html;
   } catch(e) {
     document.getElementById('searchResults').innerHTML =
-      '<div class="empty-state"><div class="title">Search failed</div></div>';
+      '<div class="empty-state"><div class="title">搜索失败</div></div>';
   }
 }
 
 async function pullPipeline(name, version) {
   const label = version && version !== '-' ? name + '@' + version : name;
-  if (!confirm('Pull "' + label + '" into your project?')) return;
+  if (!confirm('拉取 "' + label + '" 到您的项目?')) return;
   const offline = document.getElementById('offlineMode').checked;
   const body = {pipeline_name: name, offline: offline};
   if (version && version !== '-') body.version = version;
   try {
     const data = await apiFetch('/api/registry/pull', {method:'POST', body:JSON.stringify(body)});
     const vLabel = data.version ? ' v' + data.version : '';
-    showToast('Pulled ' + name + vLabel + ' (' + data.agents_count + ' agents)');
+    showToast('已拉取 ' + name + vLabel + ' (' + data.agents_count + ' 个代理)');
   } catch(e) {}
 }
 
@@ -131,16 +131,16 @@ async function publishPipeline(localOnly) {
   const name = document.getElementById('pubName').value.trim();
   const desc = document.getElementById('pubDesc').value.trim();
   const version = document.getElementById('pubVersion').value.trim();
-  if (!name) { showToast('Pipeline name is required', 'error'); return; }
+  if (!name) { showToast('流水线名称必填', 'error'); return; }
   const body = {name, description: desc, local_only: localOnly};
   if (version) body.version = version;
   try {
     const data = await apiFetch('/api/registry/publish', {method:'POST', body:JSON.stringify(body)});
     const vLabel = data.version ? ' v' + data.version : '';
     if (data.pr_url) {
-      showToast('PR created for ' + name + vLabel);
+      showToast('已创建 PR: ' + name + vLabel);
     } else {
-      showToast('Published ' + name + vLabel + ' locally');
+      showToast('已发布 ' + name + vLabel + ' 到本地');
     }
   } catch(e) {}
 }
@@ -149,4 +149,4 @@ async function publishPipeline(localOnly) {
 window.addEventListener('DOMContentLoaded', () => setTimeout(searchRegistry, 50));
 </script>"""
 
-    return layout("Registry", body, active="registry")
+    return layout("注册表", body, active="registry")

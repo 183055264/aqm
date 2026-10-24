@@ -337,7 +337,7 @@ async function apiFetch(url, opts={}) {
     const res = await fetch(url, {headers:{'Content-Type':'application/json'}, ...opts});
     if (res.headers.get('content-type')?.includes('text/plain')) return await res.text();
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Request failed');
+    if (!res.ok) throw new Error(data.detail || '请求失败');
     return data;
   } catch(e) { showToast(e.message, 'error'); throw e; }
 }
@@ -384,8 +384,8 @@ function copyText(btn) {
   const pre = btn.closest('.pre-wrap')?.querySelector('pre');
   if (!pre) return;
   navigator.clipboard.writeText(pre.textContent).then(() => {
-    btn.textContent = 'Copied!';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    btn.textContent = '已复制';
+    setTimeout(() => { btn.textContent = '复制'; }, 1500);
   });
 }
 
@@ -402,11 +402,11 @@ window.addEventListener('unhandledrejection', function(e) {
 
 def sidebar_html(active: str = "") -> str:
     links = [
-        ("/", "Dashboard", "tasks", "tasks"),
-        ("/agents", "Agents", "agents", "agents"),
-        ("/pipelines", "Pipelines", "pipelines", "pipelines"),
-        ("/registry", "Registry", "registry", "registry"),
-        ("/validate", "Validate", "validate", "validate"),
+        ("/", "看板", "tasks", "tasks"),
+        ("/agents", "代理", "agents", "agents"),
+        ("/pipelines", "流水线", "pipelines", "pipelines"),
+        ("/registry", "注册表", "registry", "registry"),
+        ("/validate", "校验", "validate", "validate"),
     ]
     items = []
     for href, label, key, icon_key in links:
@@ -416,10 +416,10 @@ def sidebar_html(active: str = "") -> str:
 
     return f"""\
 <aside class="sidebar" role="navigation" aria-label="Main navigation">
-  <div class="sidebar-logo"><span>aqm</span> Dashboard</div>
+  <div class="sidebar-logo"><span>aqm</span> 控制台</div>
   <nav class="sidebar-nav">
     <div class="nav-section">
-      <div class="nav-section-title">Navigation</div>
+      <div class="nav-section-title">导航</div>
       {"".join(items)}
     </div>
   </nav>
@@ -453,7 +453,7 @@ def topbar_html(breadcrumbs: list[tuple[str, str | None]] | None = None) -> str:
     {bc}
   </div>
   <div class="topbar-right">
-    <button class="btn btn-icon" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme"><span id="themeIcon">{ICONS["sun"]}</span></button>
+    <button class="btn btn-icon" onclick="toggleTheme()" title="切换主题" aria-label="切换主题"><span id="themeIcon">{ICONS["sun"]}</span></button>
   </div>
 </div>"""
 
@@ -478,7 +478,7 @@ def layout(
 ) -> str:
     return f"""\
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -487,7 +487,7 @@ def layout(
   {extra_head}
 </head>
 <body>
-<a href="#main" class="sr-only">Skip to main content</a>
+<a href="#main" class="sr-only">跳到主要内容</a>
 <div class="app-layout">
 {sidebar_html(active)}
 <div class="main-content" role="main" id="main">
@@ -519,7 +519,22 @@ def fmt_time(dt: Optional[datetime]) -> str:
 
 
 def badge(status: str) -> str:
-    return f'<span class="badge badge-{esc(status)}">{esc(status)}</span>'
+    """Render a status badge with Chinese label."""
+    labels = {
+        "pending": "待处理",
+        "in_progress": "运行中",
+        "awaiting_gate": "等待审批",
+        "approved": "已通过",
+        "completed": "已完成",
+        "rejected": "已拒绝",
+        "failed": "失败",
+        "cancelled": "已取消",
+        "awaiting_human_input": "等待输入",
+        "stalled": "停滞",
+        "started": "已开始",
+    }
+    label = labels.get(status, status)
+    return f'<span class="badge badge-{esc(status)}">{esc(label)}</span>'
 
 
 def fmt_duration(started_at: Optional[datetime], finished_at: Optional[datetime]) -> str:
@@ -539,4 +554,4 @@ def fmt_duration(started_at: Optional[datetime], finished_at: Optional[datetime]
 
 def copy_pre(content: str) -> str:
     """Wrap content in a <pre> with a copy button overlay."""
-    return f'<div class="pre-wrap"><button class="copy-btn" onclick="copyText(this)">Copy</button><pre>{esc(content)}</pre></div>'
+    return f'<div class="pre-wrap"><button class="copy-btn" onclick="copyText(this)">复制</button><pre>{esc(content)}</pre></div>'

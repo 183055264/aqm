@@ -129,7 +129,7 @@ def render_pipelines(
       </div>
       <div class="form-group">
         <label>系统提示词</label>
-        <textarea id="af_prompt" rows="4" placeholder="你是一个有用的代理。任务：{{{{ input }}}}}"></textarea>
+        <textarea id="af_prompt" rows="4" placeholder="你是一个有用的代理。任务：{{{{ input }}}}"></textarea>
       </div>
 
       <!-- Handoffs -->

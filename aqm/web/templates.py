@@ -60,7 +60,7 @@ a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:under
 .breadcrumb a { color:var(--text-dim); } .breadcrumb a:hover { color:var(--text); text-decoration:none; }
 .breadcrumb .sep { color:var(--border); }
 .breadcrumb .current { color:var(--text); font-weight:600; }
-.container { max-width:1200px; margin:0 auto; padding:24px; flex:1; }
+.container { width:100%; max-width:1200px; margin:0 auto; padding:24px; flex:1; }
 
 /* ── Old top-nav (hidden, replaced by sidebar) ── */
 body > nav { display:none; }

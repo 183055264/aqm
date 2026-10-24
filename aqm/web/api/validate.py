@@ -53,7 +53,7 @@ def create_validate_router(project_root: Path) -> APIRouter:
             }
 
         # Load JSON Schema — check package-internal path first, then project root
-        schema_path = Path(__file__).resolve().parent.parent / "schema" / "agents-schema.json"
+        schema_path = Path(__file__).resolve().parent.parent.parent / "schema" / "agents-schema.json"
         if not schema_path.exists():
             schema_path = Path(__file__).resolve().parent.parent.parent.parent / "schema" / "agents-schema.json"
         if not schema_path.exists():

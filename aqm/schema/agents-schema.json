@@ -41,6 +41,11 @@
       "description": "List of agent definitions that form the pipeline.",
       "items": { "$ref": "#/definitions/AgentDefinition" },
       "minItems": 1
+    },
+    "default": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, this pipeline is the default pipeline for the project. Only one pipeline should have this flag set to true."
     }
   },
   "definitions": {

@@ -1,6 +1,4 @@
-<sub> [韩文文档](docs/README.ko.md)</sub>
-
-# aqm
+﻿# aqm
 
 **用 YAML 构建 AI Agent 团队。无需代码。无需 API Key。纯流水线。**
 
@@ -651,3 +649,4 @@ handoffs:
 | 字段 | 类型 | 默认 | 描述 |
 |---|---|---|---|
 | `to` | `string` | — | 目标 Agent ID，或逗号分隔用于扇出（`"qa, docs"`） |
+

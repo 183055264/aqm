@@ -1,0 +1,47 @@
+@echo off
+chcp 65001 >nul
+setlocal EnableExtensions
+
+REM === 修改以下路径为你自己的虚拟环境路径 ===
+set VENV=%~dp0.venv\Scripts
+set PORT=8000
+set PYTHONIOENCODING=utf-8
+set PYTHONUTF8=1
+
+echo.
+echo  ============================================================
+echo   aqm Web UI
+echo  ============================================================
+echo.
+echo   Web UI : http://localhost:%PORT%
+echo.
+
+REM 检查虚拟环境是否存在
+if not exist "%VENV%\aqm.exe" (
+    echo  错误: 未找到 aqm.exe
+    echo  请先激活虚拟环境并安装 aqm:
+    echo    python -m venv .venv
+    echo    .venv\Scripts\activate
+    echo    pip install aqm[serve,dev]
+    echo  然后修改本脚本中的 VENV 路径。
+    echo.
+    pause
+    exit /b 1
+)
+
+echo  Starting web server in new window...
+start "aqm-dashboard" "%VENV%\aqm.exe" serve --port %PORT% --host 127.0.0.1
+
+echo  Waiting for server to start (8 seconds)...
+ping -n 9 127.0.0.1 >nul
+
+echo  Opening browser...
+start http://localhost:%PORT%
+
+echo.
+echo  ============================================================
+echo   Server running at http://localhost:%PORT%
+echo   Close the aqm-dashboard window to stop.
+echo  ============================================================
+echo.
+pause

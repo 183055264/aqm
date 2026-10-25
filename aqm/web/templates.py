@@ -198,7 +198,7 @@ pre { background:var(--surface2); border:1px solid var(--border); border-radius:
 
 /* ── Dropdown ───────────────────────────────── */
 .dropdown { position:relative; display:inline-block; }
-.dropdown-menu { display:none; position:absolute; right:0; top:100%; margin-top:4px; background:var(--surface); border:1px solid var(--border); border-radius:6px; min-width:160px; z-index:50; box-shadow:0 4px 16px rgba(0,0,0,.3); overflow:hidden; }
+.dropdown-menu { display:none; position:fixed; background:var(--surface); border:1px solid var(--border); border-radius:6px; min-width:160px; z-index:100; box-shadow:0 4px 16px rgba(0,0,0,.3); overflow:hidden; }
 .dropdown-menu.show { display:block; }
 .dropdown-menu a,.dropdown-menu button { display:block; width:100%; padding:8px 14px; font-size:13px; color:var(--text); border:none; background:none; cursor:pointer; text-align:left; text-decoration:none; }
 .dropdown-menu a:hover,.dropdown-menu button:hover { background:var(--surface2); text-decoration:none; }
@@ -364,12 +364,42 @@ document.addEventListener('keydown', function(e) {
 /* ── Dropdown ──────────────────────────────── */
 function toggleDropdown(el) {
   const menu = el.nextElementSibling;
+  const wasOpen = menu.classList.contains('show');
+
+  // Close all other dropdowns
   document.querySelectorAll('.dropdown-menu.show').forEach(m => { if(m!==menu) m.classList.remove('show'); });
-  menu.classList.toggle('show');
+
+  if (wasOpen) {
+    menu.classList.remove('show');
+    return;
+  }
+
+  // Show menu to measure dimensions
+  menu.style.visibility = 'hidden';
+  menu.classList.add('show');
+
+  // Position relative to button (viewport coords)
+  const rect = el.getBoundingClientRect();
+  const menuW = menu.offsetWidth;
+  const menuH = menu.offsetHeight;
+
+  let left = rect.right - menuW;
+  if (left < 8) left = 8;
+
+  let top = rect.bottom + 4;
+  if (top + menuH > window.innerHeight - 8) {
+    top = rect.top - menuH - 4;
+  }
+
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  menu.style.visibility = '';
 }
 document.addEventListener('click', function(e) {
   if (!e.target.closest('.dropdown')) document.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'));
 });
+window.addEventListener('scroll', () => document.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show')), true);
+window.addEventListener('resize', () => document.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show')), false);
 
 /* ── Mobile sidebar ────────────────────────── */
 function toggleSidebar() {

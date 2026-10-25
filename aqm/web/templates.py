@@ -78,7 +78,7 @@ body > nav { display:none; }
 
 /* ── Tables ─────────────────────────────────── */
 .table-wrap { overflow-x:auto; }
-table { width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+table { width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); }
 thead { background:var(--surface2); }
 th,td { padding:10px 14px; text-align:left; font-size:14px; border-bottom:1px solid var(--border); }
 th { font-weight:600; color:var(--text-dim); font-size:12px; text-transform:uppercase; letter-spacing:.5px; cursor:default; }

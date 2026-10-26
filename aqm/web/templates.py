@@ -427,17 +427,32 @@ window.addEventListener('unhandledrejection', function(e) {
 
 /* ── Project switch ────────────────────────── */
 function showProjectSwitch() {
-  apiFetch('/api/project').then(data => {
+  fetch('/api/project').then(r => r.json()).then(data => {
     const modal = document.getElementById('projectSwitchModal');
     modal?.classList.add('show');
     document.getElementById('projectInput').value = data.current || '';
-    document.getElementById('projectRecent').innerHTML = (data.recent || []).map(p => 
-      `<div style="padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''" onclick="document.getElementById('projectInput').value='${p.replace(/'/g, "\\'")}';hideProjectSwitch()">
-        <div style="font-weight:600;">${p.split('\\').pop() || p.split('/').pop()}</div>
-        <div style="color:var(--text-dim);font-size:11px;">${p}</div>
-      </div>`
-    ).join('') || '<div style="padding:8px;color:var(--text-dim);font-size:12px;">无历史记录</div>';
-  });
+    const recent = data.recent || [];
+    if (recent.length) {
+      let html = '';
+      for (let i = 0; i < recent.length; i++) {
+        const p = recent[i];
+        const name = p.split(/[\\/]/).pop();
+        const escPath = p.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        html += '<div style="padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;" ' +
+                'onmouseover="this.style.background=\'var(--surface2)\'" ' +
+                'onmouseout="this.style.background=\'\'" ' +
+                'onclick="document.getElementById(\'projectInput\').value=\'' + escPath + '\';hideProjectSwitch()">' +
+                '<div style="font-weight:600;">' + name + '</div>' +
+                '<div style="color:var(--text-dim);font-size:11px;">' + p + '</div>' +
+                '</div>';
+      }
+      document.getElementById('projectRecent').innerHTML = html;
+    } else {
+      document.getElementById('projectRecent').innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:12px;">无历史记录</div>';
+    }
+  }).catch(() => {});
+}
+  }).catch(() => {});
 }
 function hideProjectSwitch() {
   document.getElementById('projectSwitchModal')?.classList.remove('show');
@@ -446,17 +461,25 @@ async function switchProject() {
   const path = document.getElementById('projectInput').value.trim();
   if (!path) return;
   try {
-    const data = await apiFetch('/api/project/switch', {method:'POST', body:JSON.stringify({path: path})});
+    const res = await fetch('/api/project/switch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path: path})});
+    const data = await res.json();
     hideProjectSwitch();
     showToast(data.message, 'info');
     setTimeout(() => location.reload(), 1500);
   } catch(e) {}
 }
 // Load project info on page load
-apiFetch('/api/project').then(data => {
-  const el = document.getElementById('projectPath');
-  if (el) el.textContent = data.current?.split(/[\\/]/).pop() || data.current || '';
-}).catch(() => {});
+function loadProjectInfo() {
+  fetch('/api/project').then(r => r.json()).then(data => {
+    const el = document.getElementById('projectPath');
+    if (el && data.current) el.textContent = data.current.split(/[\\/]/).pop();
+  }).catch(() => {});
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', loadProjectInfo);
+} else {
+  loadProjectInfo();
+}
 """
 
 
@@ -578,6 +601,7 @@ def layout(
     <div class="form-group">
       <label for="projectInput">项目路径</label>
       <input id="projectInput" type="text" placeholder="输入项目目录路径，如 D:\my-project">
+      <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">提示：浏览器安全限制，需手动输入路径</div>
     </div>
     <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">最近项目：</div>
     <div id="projectRecent" style="max-height:120px;overflow-y:auto;margin-bottom:12px;"></div>

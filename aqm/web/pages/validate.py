@@ -26,7 +26,9 @@ async function runValidation() {
   document.getElementById('validationResult').innerHTML = '<div style="text-align:center;color:var(--text-dim);padding:24px;">校验中...</div>';
   const strict = document.getElementById('strictMode').checked;
   try {
-    const data = await apiFetch('/api/validate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({strict: strict})});
+    const res = await fetch('/api/validate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({strict: strict})});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '请求失败');
     let html = '';
 
     if (data.valid) {
@@ -79,7 +81,7 @@ async function runValidation() {
   }
 }
 
-// Auto-validate on load (defer to ensure apiFetch is defined)
+// Auto-validate on load
 window.addEventListener('DOMContentLoaded', () => setTimeout(runValidation, 50));
 </script>"""
 

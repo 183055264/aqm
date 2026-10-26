@@ -1396,7 +1396,7 @@ def serve(port: int, host: str) -> None:
     try:
         from aqm.web.app import create_app
 
-        app = create_app(root)
+        app = create_app(root, host=host, port=port)
 
         import uvicorn
 

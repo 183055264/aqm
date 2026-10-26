@@ -25,12 +25,17 @@ from aqm.queue.sqlite import SQLiteQueue
 from aqm.meeting import list_meetings
 
 
-def create_app(project_root: Path) -> FastAPI:
+def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) -> FastAPI:
     """Create and return the FastAPI application for the aqm dashboard."""
     app = FastAPI(title="aqm 控制台", docs_url="/docs")
 
     project_root = Path(project_root).resolve()
     db_path = get_db_path(project_root)
+    
+    # Store server config for restart
+    app.state.host = host
+    app.state.port = port
+    app.state.project_root = project_root
 
     def _get_queue() -> SQLiteQueue:
         return SQLiteQueue(db_path)
@@ -277,6 +282,7 @@ def create_app(project_root: Path) -> FastAPI:
         import threading
         import time
         import os
+        import platform
         
         # Get the current project root from config
         from aqm.core.config import get_default_project
@@ -285,6 +291,10 @@ def create_app(project_root: Path) -> FastAPI:
         if new_project is None:
             return {"status": "error", "message": "没有保存的项目配置"}
         
+        # Get current server config
+        host = app.state.host
+        port = app.state.port
+        
         def _restart_in_background():
             """Stop old server, then start new server."""
             try:
@@ -292,43 +302,63 @@ def create_app(project_root: Path) -> FastAPI:
                 venv_scripts = os.path.dirname(sys.executable)
                 aqm_exe = os.path.join(venv_scripts, "aqm.exe")
                 
-                if not os.path.exists(aqm_exe):
-                    cmd = [
-                        sys.executable, "-m", "aqm", "serve",
-                        "--project", str(new_project),
-                        "--port", "8000"
-                    ]
-                else:
+                # Use aqm.exe if available, otherwise try python -m aqm.cli
+                if os.path.exists(aqm_exe):
                     cmd = [
                         aqm_exe, "--project", str(new_project),
-                        "serve", "--port", "8000"
+                        "serve", "--port", str(port),
+                        "--host", host
+                    ]
+                else:
+                    # Fallback: try aqm.cli module
+                    cmd = [
+                        sys.executable, "-m", "aqm.cli", "serve",
+                        "--project", str(new_project),
+                        "--port", str(port),
+                        "--host", host
                     ]
                 
-                # Start a new process that will:
-                # 1. Wait for old server to stop
-                # 2. Start new server
-                restart_script = f"""
-@echo off
+                is_windows = platform.system() == "Windows"
+                
+                if is_windows:
+                    # Windows: create .bat script
+                    restart_script = f"""@echo off
 chcp 65001 >nul
 echo Restarting aqm server...
 timeout /t 3 /nobreak >nul
-echo Starting new server...
-{' '.join(cmd)}
+echo Starting new server on port {port}...
+{" ".join(cmd)}
 """
-                
-                # Write restart script to temp file
-                import tempfile
-                temp_dir = tempfile.gettempdir()
-                restart_bat = os.path.join(temp_dir, "aqm_restart.bat")
-                with open(restart_bat, "w", encoding="utf-8") as f:
-                    f.write(restart_script)
-                
-                # Start restart script in a new window
-                subprocess.Popen(
-                    [restart_bat],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE,
-                    shell=True
-                )
+                    import tempfile
+                    temp_dir = tempfile.gettempdir()
+                    restart_script_path = os.path.join(temp_dir, "aqm_restart.bat")
+                    with open(restart_script_path, "w", encoding="utf-8") as f:
+                        f.write(restart_script)
+                    
+                    subprocess.Popen(
+                        [restart_script_path],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                        shell=True
+                    )
+                else:
+                    # Unix: create .sh script
+                    restart_script = f"""#!/bin/bash
+echo "Restarting aqm server..."
+sleep 3
+echo "Starting new server on port {port}..."
+{" ".join(cmd)}
+"""
+                    import tempfile
+                    temp_dir = tempfile.gettempdir()
+                    restart_script_path = os.path.join(temp_dir, "aqm_restart.sh")
+                    with open(restart_script_path, "w", encoding="utf-8") as f:
+                        f.write(restart_script)
+                    
+                    os.chmod(restart_script_path, 0o755)
+                    subprocess.Popen(
+                        [restart_script_path],
+                        preexec_fn=os.setsid
+                    )
                 
                 # Stop old server (this process)
                 time.sleep(0.5)

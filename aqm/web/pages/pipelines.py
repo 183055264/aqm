@@ -310,12 +310,12 @@ function addHandoffRow(to, condition) {{
   row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center;';
   row.innerHTML = `
     <input type="text" class="ho-to" value="${{to||''}}" placeholder="目标代理 ID" style="flex:1;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);">
-    <select class="ho-cond" style="padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);">
-      <option value="always" ${(condition||'always')==='always'?'selected':''}>始终</option>
-      <option value="on_approve" ${condition==='on_approve'?'selected':''}>审批通过</option>
-      <option value="on_reject" ${condition==='on_reject'?'selected':''}>审批拒绝</option>
-      <option value="auto" ${condition==='auto'?'selected':''}>自动</option>
-    </select>
+     <select class="ho-cond" style="padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);">
+       <option value="always" ${{(condition||'always')==='always'?'selected':''}}>始终</option>
+       <option value="on_approve" ${{condition==='on_approve'?'selected':''}}>审批通过</option>
+       <option value="on_reject" ${{condition==='on_reject'?'selected':''}}>审批拒绝</option>
+       <option value="auto" ${{condition==='auto'?'selected':''}}>自动</option>
+     </select>
     <button type="button" class="btn btn-sm" onclick="this.parentElement.remove()" style="color:var(--red);">✕</button>
   `;
   container.appendChild(row);

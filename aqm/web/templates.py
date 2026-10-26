@@ -483,8 +483,16 @@ async function switchProject() {
       return;
     }
     hideProjectSwitch();
-    showToast('已切换项目，请手动重启服务器以应用更改。', 'info');
-    setTimeout(() => location.reload(), 1500);
+    showToast('已切换项目，正在重启服务器...', 'info');
+    // Call restart API - server will start new instance and stop old one
+    const res2 = await fetch('/api/project/restart', {method:'POST'});
+    if (res2.ok) {
+      showToast('服务器正在重启，请稍后刷新页面...', 'success');
+      // Try to reload after a delay (may fail if server is stopping)
+      setTimeout(() => location.reload(), 5000);
+    } else {
+      showToast('重启失败，请手动重启服务器', 'error');
+    }
   } catch(e) {
     showToast('请求失败: ' + e.message, 'error');
   }
@@ -506,8 +514,15 @@ async function initAndSwitchProject(path) {
       return;
     }
     hideProjectSwitch();
-    showToast('项目已创建，请手动重启服务器以应用更改。', 'success');
-    setTimeout(() => location.reload(), 1500);
+    showToast('项目已创建，正在重启服务器...', 'success');
+    // Call restart API
+    const res3 = await fetch('/api/project/restart', {method:'POST'});
+    if (res3.ok) {
+      showToast('服务器正在重启，请稍后刷新页面...', 'success');
+      setTimeout(() => location.reload(), 5000);
+    } else {
+      showToast('重启失败，请手动重启服务器', 'error');
+    }
   } catch(e) {
     showToast('请求失败: ' + e.message, 'error');
   }

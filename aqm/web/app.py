@@ -271,12 +271,78 @@ def create_app(project_root: Path) -> FastAPI:
 
     @app.post("/api/project/restart")
     async def api_restart_server():
-        """Request server restart (for project switch)."""
-        # Note: Server cannot restart itself cleanly. Config is saved,
-        # user must restart the server manually to apply changes.
+        """Restart server with new project configuration."""
+        import subprocess
+        import sys
+        import threading
+        import time
+        import os
+        
+        # Get the current project root from config
+        from aqm.core.config import get_default_project
+        new_project = get_default_project()
+        
+        if new_project is None:
+            return {"status": "error", "message": "没有保存的项目配置"}
+        
+        def _restart_in_background():
+            """Stop old server, then start new server."""
+            try:
+                # Find aqm executable in the venv
+                venv_scripts = os.path.dirname(sys.executable)
+                aqm_exe = os.path.join(venv_scripts, "aqm.exe")
+                
+                if not os.path.exists(aqm_exe):
+                    cmd = [
+                        sys.executable, "-m", "aqm", "serve",
+                        "--project", str(new_project),
+                        "--port", "8000"
+                    ]
+                else:
+                    cmd = [
+                        aqm_exe, "--project", str(new_project),
+                        "serve", "--port", "8000"
+                    ]
+                
+                # Start a new process that will:
+                # 1. Wait for old server to stop
+                # 2. Start new server
+                restart_script = f"""
+@echo off
+chcp 65001 >nul
+echo Restarting aqm server...
+timeout /t 3 /nobreak >nul
+echo Starting new server...
+{' '.join(cmd)}
+"""
+                
+                # Write restart script to temp file
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+                restart_bat = os.path.join(temp_dir, "aqm_restart.bat")
+                with open(restart_bat, "w", encoding="utf-8") as f:
+                    f.write(restart_script)
+                
+                # Start restart script in a new window
+                subprocess.Popen(
+                    [restart_bat],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    shell=True
+                )
+                
+                # Stop old server (this process)
+                time.sleep(0.5)
+                os._exit(0)
+            except Exception as e:
+                print(f"Restart failed: {e}")
+                os._exit(0)
+        
+        # Start restart in background thread
+        threading.Thread(target=_restart_in_background, daemon=True).start()
+        
         return {
-            "status": "saved",
-            "message": "配置已保存，请手动重启服务器以应用更改。",
+            "status": "restarting",
+            "message": "服务器正在重启，请稍后刷新页面...",
         }
 
     # ── API Routes ────────────────────────────────────────────────────

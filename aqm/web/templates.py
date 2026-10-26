@@ -470,11 +470,43 @@ async function switchProject() {
     const res = await fetch('/api/project/switch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path: path})});
     const data = await res.json();
     if (!res.ok) {
+      // 404 = not a valid aqm project, prompt to create
+      if (res.status === 404) {
+        if (confirm(data.detail + '\n\n是否创建该项目？')) {
+          await initAndSwitchProject(path);
+          return;
+        }
+        showToast(data.detail || '切换失败', 'error');
+        return;
+      }
       showToast(data.detail || '切换失败', 'error');
       return;
     }
     hideProjectSwitch();
     showToast(data.message || '已切换', 'info');
+    setTimeout(() => location.reload(), 1500);
+  } catch(e) {
+    showToast('请求失败: ' + e.message, 'error');
+  }
+}
+async function initAndSwitchProject(path) {
+  try {
+    showToast('正在创建项目...', 'info');
+    const res1 = await fetch('/api/project/init', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path: path})});
+    const data1 = await res1.json();
+    if (!res1.ok) {
+      showToast(data1.detail || '创建失败', 'error');
+      return;
+    }
+    // Now switch to the newly created project
+    const res2 = await fetch('/api/project/switch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path: path})});
+    const data2 = await res2.json();
+    if (!res2.ok) {
+      showToast(data2.detail || '切换失败', 'error');
+      return;
+    }
+    hideProjectSwitch();
+    showToast(data1.message + '\n' + data2.message, 'success');
     setTimeout(() => location.reload(), 1500);
   } catch(e) {
     showToast('请求失败: ' + e.message, 'error');

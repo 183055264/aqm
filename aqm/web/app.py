@@ -232,14 +232,40 @@ def create_app(project_root: Path) -> FastAPI:
         if not path_str:
             raise HTTPException(400, "路径不能为空")
         new_root = Path(path_str).expanduser().resolve()
+        if not new_root.is_dir():
+            raise HTTPException(400, f"{new_root} 目录不存在")
         if not (new_root / ".aqm").is_dir():
-            raise HTTPException(400, f"{new_root} 不是有效的 aqm 项目 (没有 .aqm/ 目录)")
+            # Return 404 to indicate "not a valid project" - frontend will prompt to create
+            raise HTTPException(404, f"{new_root} 不是有效的 aqm 项目 (没有 .aqm/ 目录)")
         # Save as default project
         set_default_project(new_root)
         add_recent_project(new_root)
         return {
             "status": "ok",
             "message": f"已切换到 {new_root}。请重启服务器以应用更改。",
+            "new_project": str(new_root),
+        }
+
+    @app.post("/api/project/init")
+    async def api_init_project(request: Request):
+        """Initialize a new aqm project in the given directory."""
+        from aqm.core.project import init_project
+        body = await request.json()
+        path_str = body.get("path", "").strip()
+        if not path_str:
+            raise HTTPException(400, "路径不能为空")
+        new_root = Path(path_str).expanduser().resolve()
+        if not new_root.is_dir():
+            raise HTTPException(400, f"{new_root} 目录不存在")
+        if (new_root / ".aqm").is_dir():
+            raise HTTPException(400, f"{new_root} 已经是 aqm 项目")
+        try:
+            init_project(new_root)
+        except Exception as e:
+            raise HTTPException(500, f"初始化失败: {str(e)}")
+        return {
+            "status": "ok",
+            "message": f"已在 {new_root} 创建 aqm 项目",
             "new_project": str(new_root),
         }
 

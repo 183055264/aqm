@@ -1394,8 +1394,15 @@ def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: i
     """Run a multi-agent collaborative meeting."""
     root = _require_project()
 
-    from aqm.meeting import create_meeting, start_meeting, list_meetings, MeetingStatus, DEFAULT_AGENTS
+    from aqm.meeting import (
+        create_meeting, start_meeting, list_meetings,
+        MeetingStatus, DEFAULT_AGENTS,
+        load_meetings_on_startup, get_meeting as _get_meeting,
+    )
     import time
+
+    # Load historical meetings from disk
+    load_meetings_on_startup(root)
 
     # Parse agent list
     agent_ids = []
@@ -1440,11 +1447,10 @@ def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: i
     # Monitor progress
     from rich.live import Live
     from rich.table import Table
-    from aqm.meeting import get_meeting as _get_meeting
 
     with Live(console=console, refresh_percent=0.1) as live:
         while True:
-            m = _get_meeting(m.id)
+            m = _get_meeting(m.id, root)
             if not m:
                 break
             if m.status in (MeetingStatus.completed.value, MeetingStatus.stopped.value, MeetingStatus.error.value):
@@ -1470,7 +1476,7 @@ def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: i
             time.sleep(2)
 
     # Final status
-    m = _get_meeting(m.id)
+    m = _get_meeting(m.id, root)
     if m:
         console.print(f"\n[bold]Meeting finished:[/] {m.status}")
         if m.error:

@@ -183,9 +183,12 @@ async function refreshMeetingList() {
                           m.status === 'stopped' ? '<span class="badge badge-cancelled">已停止</span>' :
                           m.status === 'error' ? '<span class="badge badge-failed">失败</span>' :
                           '<span class="badge badge-pending">待开始</span>';
+      const startLabel = m.status === 'completed' ? '重新运行' :
+                         m.status === 'stopped' ? '继续' :
+                         m.status === 'error' ? '重试' : '启动';
       const actions = m.status === 'running'
         ? `<button class="btn btn-sm btn-red" onclick="stopCurrentMeeting2('${m.id}')">停止</button>`
-        : `<button class="btn btn-sm" onclick="startMeeting2('${m.id}')">启动</button>
+        : `<button class="btn btn-sm" onclick="startMeeting2('${m.id}')">${startLabel}</button>
            <button class="btn btn-sm" onclick="viewMeeting('${m.id}')">查看</button>
            <button class="btn btn-sm" style="color:var(--red);" onclick="deleteMeeting2('${m.id}')">删除</button>`;
       html += `<tr><td><strong>${m.topic}</strong></td><td>${statusBadge}</td><td>${m.agents.length}</td><td>${m.current_round}/${m.rounds}</td><td>${m.created_at.substring(0,16).replace('T',' ')}</td><td>${actions}</td></tr>`;

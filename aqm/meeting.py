@@ -107,6 +107,64 @@ class Meeting:
             "error": self.error,
         }
 
+    def to_persist_dict(self) -> dict:
+        """Full serialization including agent outputs for disk persistence."""
+        return {
+            "id": self.id,
+            "topic": self.topic,
+            "description": self.description,
+            "agents": [
+                {
+                    "id": a.id,
+                    "name": a.name,
+                    "runtime": a.runtime,
+                    "role": a.role,
+                    "system_prompt": a.system_prompt,
+                    "model": a.model,
+                    "status": a.status,
+                    "started_at": a.started_at,
+                    "finished_at": a.finished_at,
+                    "output": a.output,
+                    "error": a.error,
+                }
+                for a in self.agents
+            ],
+            "shared_file": self.shared_file,
+            "status": self.status,
+            "current_agent_index": self.current_agent_index,
+            "rounds": self.rounds,
+            "current_round": self.current_round,
+            "timeout_per_agent": self.timeout_per_agent,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_persist_dict(cls, data: dict) -> Meeting:
+        """Deserialize from persisted dict on disk."""
+        known_fields = set(MeetingAgent.__dataclass_fields__.keys())
+        return cls(
+            id=data["id"],
+            topic=data["topic"],
+            description=data.get("description", ""),
+            agents=[
+                MeetingAgent(**{k: v for k, v in a.items() if k in known_fields})
+                for a in data.get("agents", [])
+            ],
+            shared_file=data.get("shared_file", "meeting.md"),
+            status=data.get("status", "idle"),
+            current_agent_index=data.get("current_agent_index", 0),
+            rounds=data.get("rounds", 1),
+            current_round=data.get("current_round", 1),
+            timeout_per_agent=data.get("timeout_per_agent", 300),
+            created_at=data.get("created_at", datetime.now(timezone.utc).isoformat()),
+            started_at=data.get("started_at"),
+            finished_at=data.get("finished_at"),
+            error=data.get("error", ""),
+        )
+
 
 # In-memory meeting store
 _meetings: dict[str, Meeting] = {}
@@ -115,6 +173,65 @@ _meetings_lock = threading.Lock()
 # SSE subscribers: meeting_id -> list of asyncio.Queue
 _sse_subscribers: dict[str, list[asyncio.Queue]] = {}
 _sse_lock = threading.Lock()
+
+
+def _meetings_dir(project_root: Path) -> Path:
+    return project_root / ".aqm" / "meetings"
+
+
+def _save_meeting(meeting: Meeting, project_root: Path) -> None:
+    """Save meeting to disk as .aqm/meetings/{id}/meta.json."""
+    d = _meetings_dir(project_root) / meeting.id
+    d.mkdir(parents=True, exist_ok=True)
+    meta_path = d / "meta.json"
+    meta_path.write_text(
+        json.dumps(meeting.to_persist_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _load_meeting_from_disk(meeting_id: str, project_root: Path) -> Optional[Meeting]:
+    meta_path = _meetings_dir(project_root) / meeting_id / "meta.json"
+    if not meta_path.exists():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        return Meeting.from_persist_dict(data)
+    except Exception as e:
+        logger.warning("Failed to load meeting %s: %s", meeting_id, e)
+        return None
+
+
+def _delete_meeting_from_disk(meeting_id: str, project_root: Path) -> None:
+    import shutil
+    d = _meetings_dir(project_root) / meeting_id
+    if d.exists():
+        shutil.rmtree(d)
+
+
+def load_meetings_on_startup(project_root: Path) -> None:
+    """Load all persisted meetings from disk into memory. Call on server/CLI startup."""
+    d = _meetings_dir(project_root)
+    if not d.exists():
+        return
+    for meeting_dir in d.iterdir():
+        if not meeting_dir.is_dir():
+            continue
+        meeting_id = meeting_dir.name
+        if meeting_id in _meetings:
+            continue
+        meta_path = meeting_dir / "meta.json"
+        if not meta_path.exists():
+            continue
+        try:
+            data = json.loads(meta_path.read_text(encoding="utf-8"))
+            meeting = Meeting.from_persist_dict(data)
+            if meeting.status == MeetingStatus.running.value:
+                meeting.status = MeetingStatus.stopped.value
+            with _meetings_lock:
+                _meetings[meeting.id] = meeting
+        except Exception as e:
+            logger.warning("Failed to load meeting %s: %s", meeting_dir.name, e)
 
 
 def create_meeting(
@@ -145,24 +262,52 @@ def create_meeting(
     )
     with _meetings_lock:
         _meetings[meeting_id] = meeting
+    if project_root:
+        _save_meeting(meeting, project_root)
     return meeting
 
 
-def get_meeting(meeting_id: str) -> Optional[Meeting]:
+def get_meeting(meeting_id: str, project_root: Optional[Path] = None) -> Optional[Meeting]:
     with _meetings_lock:
-        return _meetings.get(meeting_id)
+        m = _meetings.get(meeting_id)
+    if m:
+        return m
+    if project_root:
+        m = _load_meeting_from_disk(meeting_id, project_root)
+        if m:
+            with _meetings_lock:
+                _meetings[meeting_id] = m
+    return m
 
 
-def list_meetings() -> list[Meeting]:
+def list_meetings(project_root: Optional[Path] = None) -> list[Meeting]:
     with _meetings_lock:
-        return sorted(_meetings.values(), key=lambda m: m.created_at, reverse=True)
+        meetings = list(_meetings.values())
+    if project_root:
+        d = _meetings_dir(project_root)
+        if d.exists():
+            for meeting_dir in d.iterdir():
+                if not meeting_dir.is_dir():
+                    continue
+                mid = meeting_dir.name
+                with _meetings_lock:
+                    if mid in _meetings:
+                        continue
+                m = _load_meeting_from_disk(mid, project_root)
+                if m:
+                    with _meetings_lock:
+                        _meetings[mid] = m
+                    meetings.append(m)
+    return sorted(meetings, key=lambda m: m.created_at, reverse=True)
 
 
-def delete_meeting(meeting_id: str) -> bool:
+def delete_meeting(meeting_id: str, project_root: Optional[Path] = None) -> bool:
     with _meetings_lock:
         meeting = _meetings.pop(meeting_id, None)
     if meeting and meeting._thread and meeting._thread.is_alive():
         return False
+    if meeting is not None and project_root:
+        _delete_meeting_from_disk(meeting_id, project_root)
     return meeting is not None
 
 
@@ -307,12 +452,22 @@ def _run_agent_cli(agent: MeetingAgent, prompt: str, project_root: Path, timeout
 
 def _run_meeting(meeting: Meeting, project_root: Path) -> None:
     shared_path = project_root / meeting.shared_file
+
+    # On resume: reset running agents to waiting (they were interrupted)
+    for agent in meeting.agents:
+        if agent.status == AgentTurnStatus.running.value:
+            agent.status = AgentTurnStatus.waiting.value
+
+    is_resume = meeting.started_at is not None
     meeting.started_at = datetime.now(timezone.utc).isoformat()
+    _save_meeting(meeting, project_root)
+
     broadcast_meeting_event(meeting.id, "meeting_started", {
         "meeting_id": meeting.id,
         "topic": meeting.topic,
         "agents": [a.name for a in meeting.agents],
         "rounds": meeting.rounds,
+        "resumed": is_resume,
     })
 
     header = f"# {meeting.topic}\n\n"
@@ -323,18 +478,23 @@ def _run_meeting(meeting: Meeting, project_root: Path) -> None:
     header += "---\n"
 
     try:
-        for round_num in range(1, meeting.rounds + 1):
+        for round_num in range(meeting.current_round, meeting.rounds + 1):
             if meeting._stop_event.is_set():
                 meeting.status = MeetingStatus.stopped.value
                 break
 
             meeting.current_round = round_num
-            round_header = f"\n## 第 {round_num} 轮讨论\n\n"
-            with open(shared_path, "a", encoding="utf-8") as f:
-                if round_num == 1:
-                    f.write(header + round_header)
-                else:
-                    f.write(round_header)
+            _save_meeting(meeting, project_root)
+
+            # Write headers if needed
+            if not shared_path.exists():
+                with open(shared_path, "a", encoding="utf-8") as f:
+                    f.write(header + f"\n## 第 {round_num} 轮讨论\n\n")
+            else:
+                file_text = shared_path.read_text(encoding="utf-8")
+                if f"## 第 {round_num} 轮讨论" not in file_text:
+                    with open(shared_path, "a", encoding="utf-8") as f:
+                        f.write(f"\n## 第 {round_num} 轮讨论\n\n")
 
             broadcast_meeting_event(meeting.id, "round_start", {
                 "round": round_num,
@@ -346,8 +506,18 @@ def _run_meeting(meeting: Meeting, project_root: Path) -> None:
                     break
 
                 meeting.current_agent_index = i
+
+                # Skip completed, error, or skipped agents on resume
+                if agent.status in (
+                    AgentTurnStatus.completed.value,
+                    AgentTurnStatus.error.value,
+                    AgentTurnStatus.skipped.value,
+                ):
+                    continue
+
                 agent.status = AgentTurnStatus.running.value
                 agent.started_at = datetime.now(timezone.utc).isoformat()
+                _save_meeting(meeting, project_root)
 
                 broadcast_meeting_event(meeting.id, "agent_start", {
                     "agent_id": agent.id,
@@ -383,6 +553,8 @@ def _run_meeting(meeting: Meeting, project_root: Path) -> None:
                     with open(shared_path, "a", encoding="utf-8") as f:
                         f.write(agent_header + output + "\n\n")
 
+                    _save_meeting(meeting, project_root)
+
                     broadcast_meeting_event(meeting.id, "agent_complete", {
                         "agent_id": agent.id,
                         "agent_name": agent.name,
@@ -397,6 +569,7 @@ def _run_meeting(meeting: Meeting, project_root: Path) -> None:
                 except subprocess.TimeoutExpired:
                     agent.status = AgentTurnStatus.error.value
                     agent.error = f"超时 ({meeting.timeout_per_agent}s)"
+                    _save_meeting(meeting, project_root)
                     broadcast_meeting_event(meeting.id, "agent_error", {
                         "agent_id": agent.id,
                         "agent_name": agent.name,
@@ -406,6 +579,7 @@ def _run_meeting(meeting: Meeting, project_root: Path) -> None:
                 except FileNotFoundError as e:
                     agent.status = AgentTurnStatus.error.value
                     agent.error = str(e)
+                    _save_meeting(meeting, project_root)
                     broadcast_meeting_event(meeting.id, "agent_error", {
                         "agent_id": agent.id,
                         "agent_name": agent.name,
@@ -415,6 +589,7 @@ def _run_meeting(meeting: Meeting, project_root: Path) -> None:
                 except Exception as e:
                     agent.status = AgentTurnStatus.error.value
                     agent.error = str(e)
+                    _save_meeting(meeting, project_root)
                     broadcast_meeting_event(meeting.id, "agent_error", {
                         "agent_id": agent.id,
                         "agent_name": agent.name,
@@ -442,6 +617,7 @@ def _run_meeting(meeting: Meeting, project_root: Path) -> None:
 
     finally:
         meeting.finished_at = datetime.now(timezone.utc).isoformat()
+        _save_meeting(meeting, project_root)
         broadcast_meeting_event(meeting.id, "meeting_complete", {
             "meeting_id": meeting.id,
             "status": meeting.status,
@@ -458,8 +634,26 @@ def start_meeting(meeting_id: str, project_root: Path) -> bool:
     if meeting.status == MeetingStatus.running.value:
         return False
 
+    # If completed, restart from scratch
+    if meeting.status == MeetingStatus.completed.value:
+        meeting.current_round = 1
+        meeting.current_agent_index = 0
+        meeting.started_at = None
+        meeting.finished_at = None
+        meeting.error = ""
+        for agent in meeting.agents:
+            agent.status = AgentTurnStatus.waiting.value
+            agent.started_at = None
+            agent.finished_at = None
+            agent.output = ""
+            agent.error = ""
+        shared_path = project_root / meeting.shared_file
+        if shared_path.exists():
+            shared_path.unlink()
+
     meeting._stop_event.clear()
     meeting.status = MeetingStatus.running.value
+    _save_meeting(meeting, project_root)
     meeting._thread = threading.Thread(
         target=_run_meeting,
         args=(meeting, project_root),
@@ -469,13 +663,18 @@ def start_meeting(meeting_id: str, project_root: Path) -> bool:
     return True
 
 
-def stop_meeting(meeting_id: str) -> bool:
+def stop_meeting(meeting_id: str, project_root: Optional[Path] = None) -> bool:
     meeting = get_meeting(meeting_id)
     if not meeting:
         return False
     if meeting.status != MeetingStatus.running.value:
         return False
     meeting._stop_event.set()
+    # Save state immediately in case the thread hasn't flushed yet
+    meeting.status = MeetingStatus.stopped.value
+    meeting.finished_at = datetime.now(timezone.utc).isoformat()
+    if project_root:
+        _save_meeting(meeting, project_root)
     return True
 
 

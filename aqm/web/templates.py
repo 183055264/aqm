@@ -469,10 +469,16 @@ async function switchProject() {
   try {
     const res = await fetch('/api/project/switch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path: path})});
     const data = await res.json();
+    if (!res.ok) {
+      showToast(data.detail || '切换失败', 'error');
+      return;
+    }
     hideProjectSwitch();
-    showToast(data.message, 'info');
+    showToast(data.message || '已切换', 'info');
     setTimeout(() => location.reload(), 1500);
-  } catch(e) {}
+  } catch(e) {
+    showToast('请求失败: ' + e.message, 'error');
+  }
 }
 // Load project info on page load
 function loadProjectInfo() {

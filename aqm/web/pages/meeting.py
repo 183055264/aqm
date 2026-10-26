@@ -238,6 +238,11 @@ function showLiveView(meetingId, meeting) {
   }
   if (eventSource) eventSource.close();
   eventSource = new EventSource(`/api/meetings/${meetingId}/events`);
+  eventSource.addEventListener('meeting_started', e => {
+    const d = JSON.parse(e.data);
+    document.getElementById('liveOutput').textContent += `\n${'═'.repeat(40)}\n会议开始: ${d.topic}\n参会: ${d.agents.join(', ')}\n${'═'.repeat(40)}\n`;
+    document.getElementById('liveStatus').innerHTML = '<span class="badge badge-in_progress">运行中</span>';
+  });
   eventSource.addEventListener('agent_start', e => {
     const d = JSON.parse(e.data);
     document.getElementById('liveOutput').textContent += `\n[${d.round}轮] ${d.agent_name} (${d.runtime}) 开始发言...\n`;
@@ -290,9 +295,8 @@ function renderAgents(agents) {
 }
 
 function updateAgentStatus(agentId, status, name) {
-  const container = document.getElementById('liveAgents');
-  const cards = container.querySelectorAll('div');
-  // Simple approach: just re-render from API
+  if (!currentMeetingId) return;
+  apiFetch(`/api/meetings/${currentMeetingId}`).then(m => renderAgents(m.agents));
 }
 
 async function loadSharedFile() {

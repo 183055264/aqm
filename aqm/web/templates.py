@@ -299,6 +299,7 @@ ICONS = {
     "pipelines": '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.5 1.75a.75.75 0 00-1.5 0v1.5H5.75a.75.75 0 000 1.5H7v1.984l-3.21 2.14A1.5 1.5 0 003 10.136V13.5a1.5 1.5 0 001.5 1.5h7a1.5 1.5 0 001.5-1.5v-3.364a1.5 1.5 0 00-.79-1.312L8.5 6.734V4.75h1.25a.75.75 0 000-1.5H8.5v-1.5z"/></svg>',
     "registry": '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5A2.5 2.5 0 014.5 0h7A2.5 2.5 0 0114 2.5v11a2.5 2.5 0 01-2.5 2.5h-7A2.5 2.5 0 012 13.5v-11zM4.5 1.5a1 1 0 00-1 1v11a1 1 0 001 1h7a1 1 0 001-1v-11a1 1 0 00-1-1h-7z"/><path d="M5 4h6v1.5H5V4zm0 3h6v1.5H5V7zm0 3h4v1.5H5V10z"/></svg>',
     "validate": '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 16A8 8 0 108 0a8 8 0 000 16zm3.78-9.72a.75.75 0 00-1.06-1.06L7 8.94 5.28 7.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.25-4.25z"/></svg>',
+    "meeting": '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 1a.5.5 0 01.5.5v9a.5.5 0 01-.5.5H2.5a.5.5 0 01-.5-.5v-9a.5.5 0 01.5-.5h11zm-.5 1H3v8h10V2zM7.75 0a.75.75 0 01.75.75v.5a.75.75 0 01-1.5 0v-.5A.75.75 0 017.75 0zM11.5 14a.75.75 0 000 1.5h-7a.75.75 0 000-1.5h7z"/></svg>',
     "sun": '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12a4 4 0 100-8 4 4 0 000 8zm0 1.5a5.5 5.5 0 100-11 5.5 5.5 0 000 11zm5.657-9.157a.75.75 0 00-1.06-1.06l-.354.353a.75.75 0 001.06 1.061l.354-.354zM8 .75a.75.75 0 01.75.75v.5a.75.75 0 01-1.5 0v-.5A.75.75 0 018 .75z"/></svg>',
     "moon": '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M9.598 1.591a.75.75 0 01.785-.175 7 7 0 11-8.967 8.967.75.75 0 01.961-.96 5.5 5.5 0 007.046-7.046.75.75 0 01.175-.786z"/></svg>',
     "search": '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06l-3.04-3.04z"/></svg>',
@@ -437,6 +438,7 @@ def sidebar_html(active: str = "") -> str:
         ("/pipelines", "流水线", "pipelines", "pipelines"),
         ("/registry", "注册表", "registry", "registry"),
         ("/validate", "校验", "validate", "validate"),
+        ("/meeting", "会议", "meeting", "meeting"),
     ]
     items = []
     for href, label, key, icon_key in links:

@@ -149,6 +149,11 @@ def create_app(project_root: Path) -> FastAPI:
         from aqm.web.pages.validate import render_validate
         return render_validate()
 
+    @app.get("/meeting", response_class=HTMLResponse)
+    async def meeting_page():
+        from aqm.web.pages.meeting import render_meeting
+        return render_meeting()
+
     # ── Agents JSON API ───────────────────────────────────────────────
 
     @app.get("/api/agents")
@@ -201,10 +206,12 @@ def create_app(project_root: Path) -> FastAPI:
     from aqm.web.api.pipelines import create_pipelines_router
     from aqm.web.api.registry import create_registry_router
     from aqm.web.api.validate import create_validate_router
+    from aqm.web.api.meeting import create_meeting_router
 
     app.include_router(create_tasks_router(project_root))
     app.include_router(create_pipelines_router(project_root))
     app.include_router(create_registry_router(project_root))
     app.include_router(create_validate_router(project_root))
+    app.include_router(create_meeting_router(project_root))
 
     return app

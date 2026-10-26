@@ -21,12 +21,14 @@ def render_registry() -> str:
   </div>
   <div style="margin-top:8px;">
     <label style="font-size:13px;color:var(--text-dim);cursor:pointer;">
-      <input type="checkbox" id="offlineMode" style="margin-right:4px;"> 仅离线 (本地 + 内置)
+      <input type="checkbox" id="offlineMode" checked style="margin-right:4px;"> 仅离线 (本地 + 内置)
     </label>
   </div>
 </div>
 
-<div id="searchResults" style="margin-top:16px;"></div>
+<div id="searchResults" style="margin-top:16px;">
+  <p style="text-align:center;color:var(--text-dim);padding:40px 0;">输入关键词后点击「搜索」</p>
+</div>
 
 <div class="card" style="margin-top:24px;">
   <h3>发布当前流水线</h3>
@@ -145,8 +147,7 @@ async function publishPipeline(localOnly) {
   } catch(e) {}
 }
 
-// Auto-search on load
-window.addEventListener('DOMContentLoaded', () => setTimeout(searchRegistry, 50));
+// No auto-search — user triggers search manually
 </script>"""
 
     return layout("注册表", body, active="registry")

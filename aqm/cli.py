@@ -1380,6 +1380,106 @@ def serve(port: int, host: str) -> None:
         )
 
 
+# ── meeting ─────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.option("--topic", "-t", required=True, help="Meeting topic")
+@click.option("--description", "-d", default="", help="Meeting description / agenda")
+@click.option("--agents", "-a", multiple=True, help="Agent runtime (claude,opencode,kilo,cline). Repeatable or comma-separated")
+@click.option("--rounds", "-r", default=1, help="Number of discussion rounds")
+@click.option("--timeout", default=300, help="Timeout per agent in seconds")
+@click.option("--shared-file", "-f", default="meeting.md", help="Shared file path")
+def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: int, shared_file: str) -> None:
+    """Run a multi-agent collaborative meeting."""
+    root = _require_project()
+
+    from aqm.meeting import create_meeting, start_meeting, list_meetings, MeetingStatus, DEFAULT_AGENTS
+    import time
+
+    # Parse agent list
+    agent_ids = []
+    for a in agents:
+        for part in a.split(","):
+            part = part.strip()
+            if part:
+                agent_ids.append(part)
+
+    if not agent_ids:
+        agent_ids = [a["id"] for a in DEFAULT_AGENTS]
+
+    # Build agent configs
+    agent_configs = []
+    for aid in agent_ids:
+        matching = next((a for a in DEFAULT_AGENTS if a["id"] == aid), None)
+        if matching:
+            agent_configs.append(matching)
+        else:
+            agent_configs.append({"id": aid, "name": aid, "runtime": aid, "role": "", "system_prompt": ""})
+
+    console.print(f"\n[bold]Meeting:[/] {topic}")
+    console.print(f"[dim]Agents:[/] {', '.join(a['name'] for a in agent_configs)}")
+    console.print(f"[dim]Rounds:[/] {rounds}")
+    console.print(f"[dim]Timeout:[/] {timeout}s per agent\n")
+
+    # Create meeting
+    m = create_meeting(
+        topic=topic,
+        description=description,
+        agents=agent_configs,
+        shared_file=shared_file,
+        rounds=rounds,
+        timeout_per_agent=timeout,
+        project_root=root,
+    )
+    console.print(f"[green]Meeting created:[/] {m.id}")
+
+    # Start meeting
+    start_meeting(m.id, root)
+
+    # Monitor progress
+    from rich.live import Live
+    from rich.table import Table
+    from aqm.meeting import get_meeting as _get_meeting
+
+    with Live(console=console, refresh_percent=0.1) as live:
+        while True:
+            m = _get_meeting(m.id)
+            if not m:
+                break
+            if m.status in (MeetingStatus.completed.value, MeetingStatus.stopped.value, MeetingStatus.error.value):
+                break
+
+            table = Table(show_header=False, show_edge=False)
+            table.add_column(style="cyan", no_wrap=True)
+            table.add_column()
+
+            table.add_row("[bold]Topic[/]", topic)
+            table.add_row("[bold]Status[/]", f"[green]{m.status}[/]")
+            table.add_row("[bold]Round[/]", f"{m.current_round}/{m.rounds}")
+
+            for agent in m.agents:
+                icon = {"waiting": "○", "running": "◉", "completed": "✓", "error": "✗"}.get(agent.status, "○")
+                color = {"waiting": "dim", "running": "yellow", "completed": "green", "error": "red"}.get(agent.status, "white")
+                table.add_row(
+                    f"[{color}]{icon} {agent.name}[/{color}]",
+                    f"[{color}]{agent.status}[/{color}]" + (f" - {agent.error[:50]}" if agent.error else ""),
+                )
+
+            live.update(table)
+            time.sleep(2)
+
+    # Final status
+    m = _get_meeting(m.id)
+    if m:
+        console.print(f"\n[bold]Meeting finished:[/] {m.status}")
+        if m.error:
+            console.print(f"[red]Error:[/] {m.error}")
+        shared_path = root / m.shared_file
+        if shared_path.exists():
+            console.print(f"[green]Shared file:[/] {shared_path}")
+
+
 # ── fix (follow-up task) ───────────────────────────────────────────────
 
 

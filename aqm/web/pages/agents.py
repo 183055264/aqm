@@ -185,16 +185,18 @@ GRAPH_JS = """\
     if (!sidebar || !detail) return;
 
     let html = `<h3 style="color:var(--accent);margin-bottom:16px;">${n.name}</h3>`;
-    html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">ID:</span> ${n.id}</div></div>`;
+    html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">标识:</span> ${n.id}</div></div>`;
     html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">运行时:</span> ${n.runtime || n.type}</div></div>`;
     html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">上下文:</span> ${n.context_strategy}</div></div>`;
     if (n.gate) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">审批门:</span> ${n.gate.type} — ${(n.gate.prompt||'').substring(0,100)}</div></div>`;
     if (n.human_input) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">人工输入:</span> ${n.human_input.mode}</div></div>`;
-    if (n.mcp.length) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">MCP:</span> ${n.mcp.join(', ')}</div></div>`;
+    if (n.mcp.length) html += `<div class="meta-row"><div class="meta-item"><span class="meta-label">MCP 服务:</span> ${n.mcp.join(', ')}</div></div>`;
     if (n.handoffs_raw.length) {
       html += `<h4 style="margin-top:16px;margin-bottom:8px;">交接</h4>`;
       n.handoffs_raw.forEach(h => {
-        html += `<div style="font-size:13px;padding:4px 0;color:var(--text-dim);">→ ${h.to} <span class="badge badge-${h.condition}">${h.condition}</span></div>`;
+        const condMap = {always:'始终', on_approve:'审批通过', on_reject:'审批拒绝', auto:'自动'};
+        const condLabel = condMap[h.condition] || h.condition;
+        html += `<div style="font-size:13px;padding:4px 0;color:var(--text-dim);">→ ${h.to} <span class="badge badge-${h.condition}">${condLabel}</span></div>`;
       });
     }
     if (n.system_prompt_preview) {

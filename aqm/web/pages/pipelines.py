@@ -124,6 +124,9 @@ def render_pipelines(
             <option value="claude">Claude</option>
             <option value="gemini">Gemini</option>
             <option value="codex">Codex</option>
+            <option value="opencode">OpenCode</option>
+            <option value="kilo">Kilo</option>
+            <option value="cline">Cline</option>
           </select>
         </div>
       </div>
@@ -150,7 +153,7 @@ def render_pipelines(
           <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;">
             <div class="form-group">
               <label>类型</label>
-              <select id="af_gateType"><option value="llm">LLM</option><option value="human">人工</option></select>
+              <select id="af_gateType"><option value="llm">LLM 审批</option><option value="human">人工审批</option></select>
             </div>
             <div class="form-group">
               <label>提示词</label>
@@ -308,10 +311,10 @@ function addHandoffRow(to, condition) {{
   row.innerHTML = `
     <input type="text" class="ho-to" value="${{to||''}}" placeholder="目标代理 ID" style="flex:1;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);">
     <select class="ho-cond" style="padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text);">
-      <option value="always" ${{(condition||'always')==='always'?'selected':''}}>always</option>
-      <option value="on_approve" ${{condition==='on_approve'?'selected':''}}>on_approve</option>
-      <option value="on_reject" ${{condition==='on_reject'?'selected':''}}>on_reject</option>
-      <option value="auto" ${{condition==='auto'?'selected':''}}>auto</option>
+      <option value="always" ${(condition||'always')==='always'?'selected':''}>始终</option>
+      <option value="on_approve" ${condition==='on_approve'?'selected':''}>审批通过</option>
+      <option value="on_reject" ${condition==='on_reject'?'selected':''}>审批拒绝</option>
+      <option value="auto" ${condition==='auto'?'selected':''}>自动</option>
     </select>
     <button type="button" class="btn btn-sm" onclick="this.parentElement.remove()" style="color:var(--red);">✕</button>
   `;

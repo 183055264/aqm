@@ -183,7 +183,7 @@ def render_tasks(
 <table id="taskTable">
 <thead><tr>
   <th style="width:32px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
-  <th data-sort="id">ID <span class="sort-icon"></span></th>
+  <th data-sort="id">标识 <span class="sort-icon"></span></th>
   <th data-sort="status">状态 <span class="sort-icon"></span></th>
   <th data-sort="priority">优先级 <span class="sort-icon"></span></th>
   <th data-sort="agent">代理 <span class="sort-icon"></span></th>

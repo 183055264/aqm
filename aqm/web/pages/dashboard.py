@@ -73,7 +73,7 @@ def render_dashboard(
   <div class="table-wrap">
   <table>
   <thead><tr>
-    <th>ID</th><th>状态</th><th>优先级</th><th>代理</th><th>描述</th><th>创建时间</th>
+    <th>标识</th><th>状态</th><th>优先级</th><th>代理</th><th>描述</th><th>创建时间</th>
   </tr></thead>
   <tbody>{''.join(rows)}</tbody>
   </table>
@@ -136,7 +136,7 @@ def render_dashboard(
     <div style="font-size:32px;">👥</div>
     <div>
       <div style="font-weight:600;font-size:15px;">创建会议</div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">多Agent协作讨论</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">多代理协作讨论</div>
     </div>
   </div>
 </div>"""

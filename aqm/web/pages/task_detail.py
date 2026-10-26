@@ -24,7 +24,7 @@ def render_task_detail(
         if a.gate:
             tip_parts.append(f"审批门: {a.gate.type}")
         if a.mcp:
-            tip_parts.append(f"MCP: {', '.join(m.server for m in a.mcp)}")
+            tip_parts.append(f"MCP 服务: {', '.join(m.server for m in a.mcp)}")
         tip_text = esc("\\n".join(tip_parts))
         name = esc(a.name or a.id)
         return f'<span class="agent-tip" data-tip="{tip_text}">{name}</span>'
@@ -33,7 +33,7 @@ def render_task_detail(
     meta = f"""\
 <div class="card">
   <div class="meta-row">
-    <div class="meta-item"><span class="meta-label">ID:</span> {esc(task.id)}</div>
+    <div class="meta-item"><span class="meta-label">标识:</span> {esc(task.id)}</div>
     <div class="meta-item"><span class="meta-label">状态:</span> {badge(task.status.value)}</div>
     <div class="meta-item"><span class="meta-label">代理:</span> {agent_tip(task.current_agent_id or '-')}</div>
   </div>
@@ -97,7 +97,7 @@ def render_task_detail(
     restart_panel = ""
     if task.status in (TaskStatus.failed, TaskStatus.completed, TaskStatus.stalled, TaskStatus.cancelled):
         stage_options = "".join(
-            f'<option value="{s.stage_number}">Stage {s.stage_number} — {esc(s.agent_id)}</option>'
+            f'<option value="{s.stage_number}">阶段 {s.stage_number} — {esc(s.agent_id)}</option>'
             for s in task.stages
         )
         restart_panel = f"""\
@@ -179,7 +179,7 @@ def render_task_detail(
 
             items.append(
                 f'<div class="timeline-item {status_class}">'
-                f'<div><strong>Stage {s.stage_number}</strong> · '
+                f'<div><strong>阶段 {s.stage_number}</strong> · '
                 f'{agent_tip(s.agent_id)}'
                 f'{gate_info}{retry_info}{duration_html}</div>'
                 f'<div style="font-size:12px;color:var(--text-dim);">'
@@ -195,8 +195,8 @@ def render_task_detail(
     if context_md:
         context_section = f"""\
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-  <span style="font-weight:600;">Context.md</span>
-  <a href="/api/tasks/{esc(task.id)}/context" class="btn btn-sm" download="context.md">Download</a>
+  <span style="font-weight:600;">上下文文件</span>
+  <a href="/api/tasks/{esc(task.id)}/context" class="btn btn-sm" download="context.md">下载</a>
 </div>
 {copy_pre(context_md)}"""
     else:
@@ -414,7 +414,7 @@ function toggleThinking() {{
   es.addEventListener('stage_start', (e) => {{
     const d = JSON.parse(e.data);
     titleEl.innerHTML = '<span class="live-dot"></span>流水线运行中';
-    statusEl.innerHTML = '<span class="live-dot"></span>Stage ' + d.stage_number + ': <strong>' + d.agent_id + '</strong>';
+    statusEl.innerHTML = '<span class="live-dot"></span>阶段 ' + d.stage_number + ': <strong>' + d.agent_id + '</strong>';
     if (outputEl) {{ outputEl.textContent = ''; outputEl.style.display = 'block'; }}
     if (outputLabel) outputLabel.style.display = 'block';
     if (thinkingOutput) thinkingOutput.textContent = '';
@@ -445,7 +445,7 @@ function toggleThinking() {{
   }});
   es.addEventListener('stage_complete', (e) => {{
     const d = JSON.parse(e.data);
-    statusEl.innerHTML = 'Stage ' + d.stage_number + ': <strong>' + d.agent_id + '</strong> — ' + (d.gate_result || 'done');
+    statusEl.innerHTML = '阶段 ' + d.stage_number + ': <strong>' + d.agent_id + '</strong> — ' + (d.gate_result || '完成');
   }});
   es.addEventListener('pipeline_resuming', (e) => {{
     titleEl.innerHTML = '<span class="live-dot"></span>恢复中...';

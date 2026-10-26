@@ -38,7 +38,7 @@ def render_registry() -> str:
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
     <div class="form-group">
       <label for="pubName">流水线名称</label>
-      <input id="pubName" type="text" placeholder="my-pipeline">
+      <input id="pubName" type="text" placeholder="我的流水线">
     </div>
     <div class="form-group">
       <label for="pubDesc">描述</label>
@@ -46,7 +46,7 @@ def render_registry() -> str:
     </div>
     <div class="form-group">
       <label for="pubVersion">版本 (可选)</label>
-      <input id="pubVersion" type="text" placeholder="auto-increment">
+      <input id="pubVersion" type="text" placeholder="自动递增">
     </div>
   </div>
   <button class="btn btn-primary" onclick="publishPipeline(false)">发布到 GitHub</button>

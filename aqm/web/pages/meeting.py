@@ -29,15 +29,15 @@ def render_meeting() -> str:
       <input id="mtRounds" type="number" value="1" min="1" max="10" style="width:100%;">
     </div>
     <div class="form-group">
-      <label>每Agent超时(秒)</label>
+      <label>每代理超时(秒)</label>
       <input id="mtTimeout" type="number" value="300" min="30" max="1800" style="width:100%;">
     </div>
   </div>
 
   <div style="margin-top:16px;">
-    <label style="font-weight:600;font-size:13px;color:var(--text-dim);">参会Agent</label>
+    <label style="font-weight:600;font-size:13px;color:var(--text-dim);">参会代理</label>
     <div id="agentList" style="margin-top:8px;"></div>
-    <button class="btn btn-sm" onclick="addAgentRow()" style="margin-top:8px;">+ 添加Agent</button>
+    <button class="btn btn-sm" onclick="addAgentRow()" style="margin-top:8px;">+ 添加代理</button>
   </div>
 
   <div style="margin-top:16px;display:flex;gap:8px;">
@@ -79,7 +79,7 @@ function addAgentRow(agent) {
   row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 1fr 2fr;gap:8px;margin-bottom:8px;align-items:start;';
   row.innerHTML = `
     <div class="form-group" style="margin-bottom:0;">
-      <label style="font-size:12px;">ID *</label>
+      <label style="font-size:12px;">标识 *</label>
       <input class="ag-id" type="text" value="${(agent&&agent.id)||''}" placeholder="agent_id" style="width:100%;">
     </div>
     <div class="form-group" style="margin-bottom:0;">
@@ -111,7 +111,7 @@ async function loadDefaultAgents() {
     const data = await apiFetch('/api/meetings/default-agents');
     document.getElementById('agentList').innerHTML = '';
     data.forEach(a => addAgentRow(a));
-    showToast('已加载默认Agent配置');
+    showToast('已加载默认代理配置');
   } catch(e) { showToast('加载失败', 'error'); }
 }
 
@@ -126,11 +126,11 @@ async function createAndStartMeeting() {
     const runtime = row.querySelector('.ag-runtime').value;
     const role = row.querySelector('.ag-role').value.trim();
     const prompt = row.querySelector('.ag-prompt').value.trim();
-    if (!id || !runtime) { showToast('Agent ID和运行时不能为空', 'error'); return; }
+    if (!id || !runtime) { showToast('代理标识和运行时不能为空', 'error'); return; }
     agents.push({id, name: role || id, runtime, role: role, system_prompt: prompt});
   });
 
-  if (!agents.length) { showToast('请至少添加一个Agent', 'error'); return; }
+  if (!agents.length) { showToast('请至少添加一个代理', 'error'); return; }
 
   try {
     const data = await apiFetch('/api/meetings', {
@@ -176,7 +176,7 @@ async function refreshMeetingList() {
       container.innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:16px;">暂无会议记录</p>';
       return;
     }
-    let html = '<div class="card"><h3>会议记录</h3><div class="table-wrap"><table><thead><tr><th>主题</th><th>状态</th><th>Agent数</th><th>轮数</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
+    let html = '<div class="card"><h3>会议记录</h3><div class="table-wrap"><table><thead><tr><th>主题</th><th>状态</th><th>代理数</th><th>轮数</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
     meetings.forEach(m => {
       const statusBadge = m.status === 'running' ? '<span class="badge badge-in_progress">运行中</span>' :
                           m.status === 'completed' ? '<span class="badge badge-completed">已完成</span>' :

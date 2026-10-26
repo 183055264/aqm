@@ -436,22 +436,28 @@ function showProjectSwitch() {
       let html = '';
       for (let i = 0; i < recent.length; i++) {
         const p = recent[i];
-        const name = p.split(/[\\/]/).pop();
-        const escPath = p.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        html += '<div style="padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;" ' +
-                'onmouseover="this.style.background=\'var(--surface2)\'" ' +
-                'onmouseout="this.style.background=\'\'" ' +
-                'onclick="document.getElementById(\'projectInput\').value=\'' + escPath + '\';hideProjectSwitch()">' +
+        const parts = p.split(new RegExp(String.fromCharCode(92) + '|/'));
+        const name = parts[parts.length - 1];
+        // Use data attribute to store path, avoid quote escaping issues
+        html += '<div class="recent-project-item" data-path="' + p + '" ' +
+                'style="padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;">' +
                 '<div style="font-weight:600;">' + name + '</div>' +
                 '<div style="color:var(--text-dim);font-size:11px;">' + p + '</div>' +
                 '</div>';
       }
       document.getElementById('projectRecent').innerHTML = html;
+      // Add click listeners
+      document.querySelectorAll('.recent-project-item').forEach(item => {
+        item.addEventListener('mouseover', () => item.style.background = 'var(--surface2)');
+        item.addEventListener('mouseout', () => item.style.background = '');
+        item.addEventListener('click', () => {
+          document.getElementById('projectInput').value = item.dataset.path;
+          hideProjectSwitch();
+        });
+      });
     } else {
       document.getElementById('projectRecent').innerHTML = '<div style="padding:8px;color:var(--text-dim);font-size:12px;">无历史记录</div>';
     }
-  }).catch(() => {});
-}
   }).catch(() => {});
 }
 function hideProjectSwitch() {
@@ -472,14 +478,13 @@ async function switchProject() {
 function loadProjectInfo() {
   fetch('/api/project').then(r => r.json()).then(data => {
     const el = document.getElementById('projectPath');
-    if (el && data.current) el.textContent = data.current.split(/[\\/]/).pop();
+    if (el && data.current) {
+      const parts = data.current.split(new RegExp(String.fromCharCode(92) + '|/'));
+      el.textContent = parts[parts.length - 1];
+    }
   }).catch(() => {});
 }
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', loadProjectInfo);
-} else {
-  loadProjectInfo();
-}
+loadProjectInfo();
 """
 
 

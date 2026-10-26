@@ -1,103 +1,139 @@
-"""Centralized project configuration — .aqm/config.yaml.
+"""Project configuration storage for aqm.
 
-All hardcoded values live here as defaults.  When a config.yaml exists,
-its values override defaults.  Missing fields keep their defaults,
-so the file is entirely optional for backward compatibility.
+Stores default project path and other user preferences.
+Configuration is stored in ~/.aqm/config.json (global) or .aqm/config.yaml (project-local).
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-AQM_DIR = ".aqm"
-CONFIG_YAML = "config.yaml"
+# Global config directory
+GLOBAL_CONFIG_DIR = Path.home() / ".aqm"
+GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / "config.json"
 
 
-# ---------------------------------------------------------------------------
-# Sub-models
-# ---------------------------------------------------------------------------
+@dataclass
+class ProjectConfig:
+    """Project-level configuration stored in .aqm/config.yaml."""
+    default_pipeline: str | None = None
+    pipeline: dict = field(default_factory=lambda: {"max_stages": 20})
+    gate: dict = field(default_factory=dict)
 
-class PipelineConfig(BaseModel):
-    max_stages: int = 20
+
+def _ensure_config_dir() -> None:
+    """Ensure global config directory exists."""
+    GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-class GateDefaults(BaseModel):
-    """Project-level defaults for LLM gates."""
+def load_config() -> dict:
+    """Load configuration from global config file."""
+    if not GLOBAL_CONFIG_FILE.exists():
+        return {}
+    try:
+        return json.loads(GLOBAL_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to load config: %s", e)
+        return {}
 
-    model: str = "claude-sonnet-4-20250514"
-    timeout: int = 120
-    system_prompt: str = (
-        "You are a quality gate evaluator. Evaluate the agent output below.\n\n"
-        "You must respond only in the following JSON format:\n"
-        '{"decision": "approved" or "rejected", "reason": "basis for the decision"}'
+
+def save_config(config: dict) -> None:
+    """Save configuration to global config file."""
+    _ensure_config_dir()
+    GLOBAL_CONFIG_FILE.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
 
 
-class RuntimeTimeouts(BaseModel):
-    claude: int = 600
-    gemini: int = 600
-    codex: int = 600
-    opencode: int = 600
-    kilo: int = 600
-    cline: int = 600
+def get_default_project() -> Optional[Path]:
+    """Get the default project path from config."""
+    config = load_config()
+    path_str = config.get("default_project")
+    if path_str:
+        path = Path(path_str).resolve()
+        if (path / ".aqm").is_dir():
+            return path
+    return None
 
 
-# ---------------------------------------------------------------------------
-# Top-level config
-# ---------------------------------------------------------------------------
-
-class ProjectConfig(BaseModel):
-    """Complete project configuration loaded from ``.aqm/config.yaml``."""
-
-    default_pipeline: Optional[str] = None
-    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
-    gate: GateDefaults = Field(default_factory=GateDefaults)
-    timeouts: RuntimeTimeouts = Field(default_factory=RuntimeTimeouts)
+def set_default_project(project_path: Path) -> None:
+    """Set the default project path in config."""
+    config = load_config()
+    config["default_project"] = str(project_path.resolve())
+    save_config(config)
 
 
-# ---------------------------------------------------------------------------
-# Load / save
-# ---------------------------------------------------------------------------
+def clear_default_project() -> None:
+    """Clear the default project path from config."""
+    config = load_config()
+    config.pop("default_project", None)
+    save_config(config)
+
+
+def get_recent_projects() -> list[Path]:
+    """Get list of recent projects from config."""
+    config = load_config()
+    projects = config.get("recent_projects", [])
+    result = []
+    for p in projects:
+        path = Path(p).resolve()
+        if (path / ".aqm").is_dir():
+            result.append(path)
+    return result
+
+
+def add_recent_project(project_path: Path) -> None:
+    """Add a project to recent projects list (max 10)."""
+    config = load_config()
+    projects = config.get("recent_projects", [])
+    path_str = str(project_path.resolve())
+    
+    # Remove if already exists
+    projects = [p for p in projects if p != path_str]
+    
+    # Add to front
+    projects.insert(0, path_str)
+    
+    # Keep max 10
+    config["recent_projects"] = projects[:10]
+    save_config(config)
+
 
 def load_project_config(root: Path) -> ProjectConfig:
-    """Load ``.aqm/config.yaml`` and merge with defaults.
-
-    Returns a default ``ProjectConfig`` when the file does not exist or
-    is empty — guaranteed to never raise.
-    """
-    config_path = root / AQM_DIR / CONFIG_YAML
-    if not config_path.exists():
+    """Load project configuration from .aqm/config.yaml."""
+    config_file = root / ".aqm" / "config.yaml"
+    if not config_file.exists():
         return ProjectConfig()
     try:
-        with open(config_path, encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        return ProjectConfig.model_validate(data)
-    except Exception as exc:
-        logger.warning("Failed to load config.yaml, using defaults: %s", exc)
+        data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+        return ProjectConfig(
+            default_pipeline=data.get("default_pipeline"),
+            pipeline=data.get("pipeline", {"max_stages": 20}),
+            gate=data.get("gate", {}),
+        )
+    except (yaml.YAMLError, OSError) as e:
+        logger.warning("Failed to load project config: %s", e)
         return ProjectConfig()
 
 
 def save_project_config(root: Path, config: ProjectConfig) -> None:
-    """Write config back to ``.aqm/config.yaml``.
-
-    Only writes fields that differ from defaults to keep the file clean.
-    """
-    config_path = root / AQM_DIR / CONFIG_YAML
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Dump only non-default values for a clean file
-    data = config.model_dump(mode="json", exclude_defaults=True)
-
-    # Always include default_pipeline if set (even if it looks like a "default")
-    if config.default_pipeline is not None:
-        data["default_pipeline"] = config.default_pipeline
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    """Save project configuration to .aqm/config.yaml."""
+    config_file = root / ".aqm" / "config.yaml"
+    data = {
+        "default_pipeline": config.default_pipeline,
+        "pipeline": config.pipeline,
+        "gate": config.gate,
+    }
+    config_file.write_text(
+        yaml.dump(data, default_flow_style=False, allow_unicode=True),
+        encoding="utf-8",
+    )

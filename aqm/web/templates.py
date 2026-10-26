@@ -424,6 +424,39 @@ function copyText(btn) {
 window.addEventListener('unhandledrejection', function(e) {
   if (e.reason && e.reason.message) showToast(e.reason.message, 'error');
 });
+
+/* ── Project switch ────────────────────────── */
+function showProjectSwitch() {
+  apiFetch('/api/project').then(data => {
+    const modal = document.getElementById('projectSwitchModal');
+    modal?.classList.add('show');
+    document.getElementById('projectInput').value = data.current || '';
+    document.getElementById('projectRecent').innerHTML = (data.recent || []).map(p => 
+      `<div style="padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''" onclick="document.getElementById('projectInput').value='${p.replace(/'/g, "\\'")}';hideProjectSwitch()">
+        <div style="font-weight:600;">${p.split('\\').pop() || p.split('/').pop()}</div>
+        <div style="color:var(--text-dim);font-size:11px;">${p}</div>
+      </div>`
+    ).join('') || '<div style="padding:8px;color:var(--text-dim);font-size:12px;">无历史记录</div>';
+  });
+}
+function hideProjectSwitch() {
+  document.getElementById('projectSwitchModal')?.classList.remove('show');
+}
+async function switchProject() {
+  const path = document.getElementById('projectInput').value.trim();
+  if (!path) return;
+  try {
+    const data = await apiFetch('/api/project/switch', {method:'POST', body:JSON.stringify({path: path})});
+    hideProjectSwitch();
+    showToast(data.message, 'info');
+    setTimeout(() => location.reload(), 1500);
+  } catch(e) {}
+}
+// Load project info on page load
+apiFetch('/api/project').then(data => {
+  const el = document.getElementById('projectPath');
+  if (el) el.textContent = data.current?.split(/[\\/]/).pop() || data.current || '';
+}).catch(() => {});
 """
 
 
@@ -456,7 +489,13 @@ def sidebar_html(active: str = "") -> str:
       {"".join(items)}
     </div>
   </nav>
-  <div class="sidebar-footer">aqm v1.3.0</div>
+  <div class="sidebar-footer" id="projectInfo">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div style="font-size:11px;color:var(--text-dim);word-break:break-all;" id="projectPath">加载中...</div>
+      <button class="btn btn-sm" style="padding:2px 8px;font-size:11px;" onclick="showProjectSwitch()" title="切换项目">切换</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">aqm v1.3.0</div>
+  </div>
 </aside>"""
 
 
@@ -531,6 +570,23 @@ def layout(
 </div>
 </div>
 <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+<!-- Project Switch Modal -->
+<div class="modal-overlay" id="projectSwitchModal">
+  <div class="modal modal-sm">
+    <h3>切换项目</h3>
+    <div class="form-group">
+      <label for="projectInput">项目路径</label>
+      <input id="projectInput" type="text" placeholder="输入项目目录路径，如 D:\my-project">
+    </div>
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">最近项目：</div>
+    <div id="projectRecent" style="max-height:120px;overflow-y:auto;margin-bottom:12px;"></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-primary" onclick="switchProject()">切换并重启</button>
+      <button class="btn" onclick="hideProjectSwitch()">取消</button>
+    </div>
+  </div>
+</div>
 {CMD_PALETTE_HTML}
 <script>{JS_UTILS}</script>
 </body>

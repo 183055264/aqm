@@ -48,8 +48,10 @@ from aqm.core.project import (
     set_default_pipeline,
 )
 from aqm.core.task import Task, TaskStatus
+from aqm.core.config import add_recent_project
 
 console = Console()
+_project_root_override: str | None = None
 
 
 def _pick_model() -> str:
@@ -164,6 +166,28 @@ def _prompt_for_params(
     return extra
 
 
+def _get_project_root() -> Path:
+    """Get project root from override, config file, or find it automatically."""
+    # 1. Check override from --project option
+    if _project_root_override:
+        root = Path(_project_root_override).resolve()
+        if (root / ".aqm").is_dir():
+            add_recent_project(root)
+            return root
+        console.print(f"[red]Error:[/] {root} is not a valid aqm project (no .aqm/ directory)")
+        sys.exit(1)
+    
+    # 2. Check saved default project
+    from aqm.core.config import get_default_project
+    default_project = get_default_project()
+    if default_project:
+        add_recent_project(default_project)
+        return default_project
+    
+    # 3. Auto-detect from current directory
+    return _require_project()
+
+
 def _require_project() -> Path:
     """Find the project root, or error if not found."""
     root = find_project_root()
@@ -184,8 +208,11 @@ def _get_queue(root: Path):
 
 @click.group()
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging")
-def cli(verbose: bool) -> None:
+@click.option("--project", type=click.Path(), default=None, help="Project directory (default: current directory or auto-detect)")
+def cli(verbose: bool, project: str | None) -> None:
     """aqm — AI agent orchestration framework"""
+    global _project_root_override
+    _project_root_override = project
     level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
         level=level,
@@ -530,7 +557,7 @@ def _init_from_ai(target: Path | None) -> None:
 )
 def run(input_text: str, agent: str | None, params: tuple[str, ...], priority: str, parallel: bool, pipeline_name: str | None) -> None:
     """Run pipeline. Example: aqm run 'Build a login feature'"""
-    root = _require_project()
+    root = _get_project_root()
 
     # Parse --param key=value pairs into a dict
     cli_params: dict[str, str] = {}
@@ -770,7 +797,7 @@ def run(input_text: str, agent: str | None, params: tuple[str, ...], priority: s
 @click.argument("task_id", required=False)
 def status(task_id: str | None) -> None:
     """Query task status."""
-    root = _require_project()
+    root = _get_project_root()
     queue = _get_queue(root)
 
     if task_id:
@@ -876,7 +903,7 @@ def status(task_id: str | None) -> None:
 )
 def list_tasks(status_filter: str | None) -> None:
     """List tasks (filter by status)."""
-    root = _require_project()
+    root = _get_project_root()
     queue = _get_queue(root)
 
     task_status = None
@@ -951,7 +978,7 @@ def list_tasks(status_filter: str | None) -> None:
 @click.option("-r", "--reason", default="", help="Approval reason")
 def approve(task_id: str, reason: str) -> None:
     """Approve human gate."""
-    root = _require_project()
+    root = _get_project_root()
     queue = _get_queue(root)
     task = queue.get(task_id)
     pipe_name = task.metadata.get("pipeline") if task else None
@@ -974,7 +1001,7 @@ def approve(task_id: str, reason: str) -> None:
 @click.option("-r", "--reason", required=True, help="Rejection reason")
 def reject(task_id: str, reason: str) -> None:
     """Reject human gate."""
-    root = _require_project()
+    root = _get_project_root()
     queue = _get_queue(root)
     task = queue.get(task_id)
     pipe_name = task.metadata.get("pipeline") if task else None
@@ -1000,7 +1027,7 @@ def reject(task_id: str, reason: str) -> None:
 @click.argument("response")
 def human_input_cmd(task_id: str, response: str) -> None:
     """Respond to an agent's human input request."""
-    root = _require_project()
+    root = _get_project_root()
     queue = _get_queue(root)
     task = queue.get(task_id)
     if not task:
@@ -1057,7 +1084,7 @@ def cancel(task_id: str, reason: str) -> None:
     For in_progress tasks, signals the pipeline to stop at the next stage boundary.
     Any code changes made by completed stages are preserved (use git to review/revert).
     """
-    root = _require_project()
+    root = _get_project_root()
     queue = _get_queue(root)
 
     task = queue.get(task_id)
@@ -1109,7 +1136,7 @@ def priority(task_id: str, level: str) -> None:
     """Change task priority. Example: aqm priority T-A3F2B1 high"""
     from aqm.core.task import TaskPriority
 
-    root = _require_project()
+    root = _get_project_root()
     queue = _get_queue(root)
 
     task = queue.get(task_id)
@@ -1135,7 +1162,7 @@ def priority(task_id: str, level: str) -> None:
 @click.option("--pipeline", "pipeline_name", default=None, help="Pipeline name")
 def agents(pipeline_name: str | None) -> None:
     """List agents and print handoff graph."""
-    root = _require_project()
+    root = _get_project_root()
     agent_defs = load_agents(get_agents_yaml_path(root, pipeline_name))
 
     console.print("[bold]Agent Pipeline[/]\n")
@@ -1171,7 +1198,7 @@ def agents(pipeline_name: str | None) -> None:
 @click.argument("task_id")
 def context(task_id: str) -> None:
     """Print the context.md content for a task."""
-    root = _require_project()
+    root = _get_project_root()
     tasks_dir = get_tasks_dir(root)
     context_path = tasks_dir / task_id / "context.md"
 
@@ -1358,10 +1385,11 @@ def validate(path: str | None, pipeline_name: str | None, strict: bool) -> None:
 @click.option("--host", default="127.0.0.1", help="Host")
 def serve(port: int, host: str) -> None:
     """Run web dashboard."""
-    root = _require_project()
+    root = _get_project_root()
 
     console.print(
         f"[green]aqm dashboard[/] → http://{host}:{port}\n"
+        f"[dim]Project:[/] {root}\n"
         f"[dim]Press Ctrl+C to stop[/]"
     )
 
@@ -1392,7 +1420,7 @@ def serve(port: int, host: str) -> None:
 @click.option("--shared-file", "-f", default="meeting.md", help="Shared file path")
 def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: int, shared_file: str) -> None:
     """Run a multi-agent collaborative meeting."""
-    root = _require_project()
+    root = _get_project_root()
 
     from aqm.meeting import (
         create_meeting, start_meeting, list_meetings,
@@ -1504,7 +1532,7 @@ def fix(task_id: str, input_text: str, agent: str | None, params: tuple[str, ...
 
     Example: aqm fix T-A3F2B1 "The login button color is wrong"
     """
-    root = _require_project()
+    root = _get_project_root()
 
     # Parse --param key=value pairs
     cli_params: dict[str, str] = {}
@@ -1633,7 +1661,7 @@ def restart(task_id: str, from_stage: int | None, pipeline_name: str | None, par
         aqm restart T-A3F2B1 --from-stage 3   # from stage 3
         aqm restart T-A3F2B1 --from-stage 1   # from the beginning
     """
-    root = _require_project()
+    root = _get_project_root()
 
     # Parse --param key=value pairs
     cli_params: dict[str, str] = {}
@@ -1775,7 +1803,7 @@ def pull(pipeline_name: str, repo: str | None, offline: bool) -> None:
         save_to_local_registry,
     )
 
-    root = _require_project()
+    root = _get_project_root()
     registry_repo = repo or DEFAULT_REGISTRY_REPO
 
     name, version = parse_name_version(pipeline_name)
@@ -1886,7 +1914,7 @@ def publish(
         save_to_local_registry,
     )
 
-    root = _require_project()
+    root = _get_project_root()
     agents_yaml = get_agents_yaml_path(root)
 
     if not agents_yaml.exists():
@@ -2072,7 +2100,7 @@ def pipeline_group() -> None:
 @pipeline_group.command(name="list")
 def pipeline_list_cmd() -> None:
     """List all pipelines in the project."""
-    root = _require_project()
+    root = _get_project_root()
     pipelines = list_pipelines(root)
     default = get_default_pipeline(root) or "default"
 
@@ -2104,7 +2132,7 @@ def pipeline_list_cmd() -> None:
 @click.option("--template", is_flag=True, help="Use default template")
 def pipeline_create_cmd(name: str, ai: bool, template: bool) -> None:
     """Create a new pipeline.  Example: aqm pipeline create code-review"""
-    root = _require_project()
+    root = _get_project_root()
     pipelines = list_pipelines(root)
 
     if name in pipelines:
@@ -2239,7 +2267,7 @@ def _init_from_ai_for_pipeline(root: Path, name: str) -> None:
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 def pipeline_delete_cmd(name: str, yes: bool) -> None:
     """Delete a pipeline.  Example: aqm pipeline delete old-pipeline"""
-    root = _require_project()
+    root = _get_project_root()
 
     if not yes:
         if not click.confirm(f"  Delete pipeline '{name}'?", default=False):
@@ -2258,7 +2286,7 @@ def pipeline_delete_cmd(name: str, yes: bool) -> None:
 @click.argument("name", required=False)
 def pipeline_default_cmd(name: str | None) -> None:
     """Get or set the default pipeline.  Example: aqm pipeline default code-review"""
-    root = _require_project()
+    root = _get_project_root()
 
     if name is None:
         current = get_default_pipeline(root) or "default"
@@ -2279,7 +2307,7 @@ def pipeline_default_cmd(name: str | None) -> None:
 @click.argument("name", required=False)
 def pipeline_edit_cmd(name: str | None) -> None:
     """Edit a pipeline with AI.  Example: aqm pipeline edit default"""
-    root = _require_project()
+    root = _get_project_root()
 
     if name is None:
         name = get_default_pipeline(root) or "default"
@@ -2385,7 +2413,7 @@ def chunks_group() -> None:
 @click.argument("task_id")
 def chunks_list_cmd(task_id: str) -> None:
     """List chunks for a task.  Example: aqm chunks list T-ABC123"""
-    root = _require_project()
+    root = _get_project_root()
     from aqm.core.chunks import ChunkManager
     from aqm.core.project import get_tasks_dir
 
@@ -2427,7 +2455,7 @@ def chunks_list_cmd(task_id: str) -> None:
 @click.argument("description")
 def chunks_add_cmd(task_id: str, description: str) -> None:
     """Add a chunk.  Example: aqm chunks add T-ABC123 "Implement login" """
-    root = _require_project()
+    root = _get_project_root()
     from aqm.core.chunks import ChunkManager
     from aqm.core.project import get_tasks_dir
 
@@ -2445,7 +2473,7 @@ def chunks_add_cmd(task_id: str, description: str) -> None:
 @click.argument("chunk_id")
 def chunks_done_cmd(task_id: str, chunk_id: str) -> None:
     """Mark chunk as done.  Example: aqm chunks done T-ABC123 C-001"""
-    root = _require_project()
+    root = _get_project_root()
     from aqm.core.chunks import ChunkManager
     from aqm.core.project import get_tasks_dir
 
@@ -2465,7 +2493,7 @@ def chunks_done_cmd(task_id: str, chunk_id: str) -> None:
 @click.argument("chunk_id")
 def chunks_remove_cmd(task_id: str, chunk_id: str) -> None:
     """Remove a chunk.  Example: aqm chunks remove T-ABC123 C-002"""
-    root = _require_project()
+    root = _get_project_root()
     from aqm.core.chunks import ChunkManager
     from aqm.core.project import get_tasks_dir
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from aqm.core.agent import load_agents
@@ -211,6 +211,46 @@ def create_app(project_root: Path) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # ── Project Config API ──────────────────────────────────────────────
+
+    @app.get("/api/project")
+    async def api_get_project():
+        """Get current project info."""
+        from aqm.core.config import get_recent_projects
+        return {
+            "current": str(project_root),
+            "recent": [str(p) for p in get_recent_projects()],
+        }
+
+    @app.post("/api/project/switch")
+    async def api_switch_project(request: Request):
+        """Switch to a different project directory."""
+        from aqm.core.config import set_default_project, add_recent_project
+        body = await request.json()
+        path_str = body.get("path", "").strip()
+        if not path_str:
+            raise HTTPException(400, "路径不能为空")
+        new_root = Path(path_str).expanduser().resolve()
+        if not (new_root / ".aqm").is_dir():
+            raise HTTPException(400, f"{new_root} 不是有效的 aqm 项目 (没有 .aqm/ 目录)")
+        # Save as default project
+        set_default_project(new_root)
+        add_recent_project(new_root)
+        return {
+            "status": "ok",
+            "message": f"已切换到 {new_root}。请重启服务器以应用更改。",
+            "new_project": str(new_root),
+        }
+
+    @app.post("/api/project/restart")
+    async def api_restart_server():
+        """Request server restart (for project switch)."""
+        import os
+        import signal
+        # Send SIGTERM to self to restart
+        os.kill(os.getpid(), signal.SIGTERM)
+        return {"status": "restarting"}
 
     # ── API Routes ────────────────────────────────────────────────────
 

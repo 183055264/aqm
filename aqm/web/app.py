@@ -272,11 +272,12 @@ def create_app(project_root: Path) -> FastAPI:
     @app.post("/api/project/restart")
     async def api_restart_server():
         """Request server restart (for project switch)."""
-        import os
-        import signal
-        # Send SIGTERM to self to restart
-        os.kill(os.getpid(), signal.SIGTERM)
-        return {"status": "restarting"}
+        # Note: Server cannot restart itself cleanly. Config is saved,
+        # user must restart the server manually to apply changes.
+        return {
+            "status": "saved",
+            "message": "配置已保存，请手动重启服务器以应用更改。",
+        }
 
     # ── API Routes ────────────────────────────────────────────────────
 

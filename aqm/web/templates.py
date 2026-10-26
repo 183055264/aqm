@@ -472,7 +472,7 @@ async function switchProject() {
     if (!res.ok) {
       // 404 = not a valid aqm project, prompt to create
       if (res.status === 404) {
-        if (confirm(data.detail + '\n\n是否创建该项目？')) {
+        if (confirm(data.detail + '\\n\\n是否创建该项目？')) {
           await initAndSwitchProject(path);
           return;
         }
@@ -483,7 +483,7 @@ async function switchProject() {
       return;
     }
     hideProjectSwitch();
-    showToast(data.message || '已切换', 'info');
+    showToast('已切换项目，请手动重启服务器以应用更改。', 'info');
     setTimeout(() => location.reload(), 1500);
   } catch(e) {
     showToast('请求失败: ' + e.message, 'error');
@@ -506,7 +506,7 @@ async function initAndSwitchProject(path) {
       return;
     }
     hideProjectSwitch();
-    showToast(data1.message + '\n' + data2.message, 'success');
+    showToast('项目已创建，请手动重启服务器以应用更改。', 'success');
     setTimeout(() => location.reload(), 1500);
   } catch(e) {
     showToast('请求失败: ' + e.message, 'error');

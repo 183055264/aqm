@@ -311,6 +311,48 @@ agents:
 
 生成 `transcript.md` 会议记录。自由混合：`批量 → 会话 → 批量`。
 
+### 会议模式（多 Agent 协作讨论）
+
+独立于流水线的轻量级多 Agent 协作功能。多个 Agent 围绕共享文件进行讨论，支持持久化、恢复和历史记录。
+
+```bash
+# CLI 运行会议
+aqm meeting -t "API 设计评审" -a claude,kilo,opencode -r 2 --timeout 300
+
+# Web UI
+aqm serve  # → 访问 /meeting 页面，图形化创建和管理会议
+```
+
+**特性：**
+
+| 功能 | 说明 |
+|------|------|
+| 共享文件协作 | 所有 Agent 读写同一个 `meeting.md`，上下文自动传递给下一个 Agent |
+| 多轮讨论 | 可配置讨论轮数，每轮所有 Agent 依次发言 |
+| 持久化存储 | 会议配置和状态保存到 `.aqm/meetings/`，服务器重启后自动恢复 |
+| 中断恢复 | 会议中断后继续运行，已完成的 Agent 自动跳过 |
+| 历史会议 | Web UI 可查看和管理所有历史会议，根据状态显示不同操作按钮 |
+| 实时流式 | Web UI 通过 SSE 实时推送 Agent 发言进度 |
+| 自定义 Agent | 支持自定义 Agent 角色和系统提示词 |
+
+**CLI 参数：**
+
+```bash
+aqm meeting [OPTIONS]
+  -t, --topic       会议主题 (必需)
+  -d, --description 会议描述/议程
+  -a, --agents      Agent 列表，逗号分隔或多次使用 (claude,opencode,kilo,cline)
+  -r, --rounds      讨论轮数 (默认: 1)
+  --timeout         每个 Agent 超时秒数 (默认: 300)
+  -f, --shared-file 共享文件路径 (默认: meeting.md)
+```
+
+**Web UI：**
+
+- **概览页** (`/`)：显示会议统计（总数/进行中/已完成）和最近会议列表
+- **会议页** (`/meeting`)：创建会议、查看实时进度、浏览历史会议
+- 会议状态按钮：待开始→"启动"、已停止→"继续"、失败→"重试"、已完成→"重新运行"
+
 ### 分块分解
 
 将任务分解为可跟踪的工作单元。Agent 通过输出指令管理分块。
@@ -599,6 +641,10 @@ aqm publish --version 2.0.0           # 以特定版本共享
 
 # 仪表盘
 aqm serve                             # Web UI 在 localhost:8000
+
+# 会议
+aqm meeting -t "API 设计评审"          # 运行会议
+aqm meeting -t "设计讨论" -a claude,kilo  # 指定 Agent
 ```
 
 ## agents.yaml 参考

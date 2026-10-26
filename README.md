@@ -60,13 +60,55 @@ pip install aqm && aqm init && aqm run "添加 JWT 认证"
 
 ## 安装
 
+### 前置要求
+
+| 依赖 | 版本 | 用途 |
+|---|---|---|
+| Python | 3.11+ | 运行 aqm 框架 |
+| Node.js | 18+ | 安装 LLM CLI runtime |
+| npm | 随 Node.js | 包管理器 |
+
+### 步骤 1：创建虚拟环境
+
+**Windows (PowerShell)**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+**Windows (CMD)**
+```cmd
+python -m venv .venv
+.\.venv\Scripts\activate.bat
+```
+
+**macOS / Linux**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+> 激活后命令行前面会出现 `(.venv)` 提示符。
+
+### 步骤 2：安装 aqm
+
+**从 PyPI 安装（推荐）**
 ```bash
 pip install aqm
 ```
 
-> 需要 Python 3.11+。至少安装一个 LLM CLI：
+**从源码安装（开发用）**
+```bash
+git clone https://github.com/aqm-framework/aqm.git
+cd aqm
+pip install -e ".[dev]"
+```
 
-| Runtime | 提供商 | 安装 |
+### 步骤 3：安装 LLM CLI Runtime
+
+aqm 通过子进程调用 CLI 工具，无需 API Key 或 SDK 设置。选择至少一个 runtime 安装：
+
+| Runtime | 提供商 | 安装命令 |
 |---|---|---|
 | `claude` | Anthropic | `npm i -g @anthropic-ai/claude-code && claude login` |
 | `gemini` | Google | `npm i -g @google/gemini-cli` |
@@ -75,7 +117,14 @@ pip install aqm
 | `kilo` | Kilocode | `npm i -g @kilocode/cli` |
 | `cline` | Cline | `npm i -g @cline/cli` |
 
-无需 API Key 或 SDK 设置——aqm 将 CLI 工具作为子进程运行。你只需为你已有的 CLI 订阅付费，而不是按 token 的 API 费用。
+> 你只需为已有的 CLI 订阅付费，而不是按 token 的 API 费用。
+
+### 步骤 4：验证安装
+
+```bash
+aqm --version          # 应输出 1.3.x
+aqm runtime list       # 显示可用的 runtime
+```
 
 ## 快速开始
 

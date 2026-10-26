@@ -68,22 +68,28 @@ pip install aqm && aqm init && aqm run "添加 JWT 认证"
 | Node.js | 18+ | 安装 LLM CLI runtime |
 | npm | 随 Node.js | 包管理器 |
 
-### 步骤 1：创建虚拟环境
+### 步骤 1：创建项目目录和虚拟环境
 
 **Windows (PowerShell)**
 ```powershell
+mkdir aqm
+cd aqm
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
 **Windows (CMD)**
 ```cmd
+mkdir aqm
+cd aqm
 python -m venv .venv
 .\.venv\Scripts\activate.bat
 ```
 
 **macOS / Linux**
 ```bash
+mkdir aqm
+cd aqm
 python3 -m venv .venv
 source .venv/bin/activate
 ```

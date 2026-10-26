@@ -22,6 +22,7 @@ from aqm.core.project import (
     list_pipelines,
 )
 from aqm.queue.sqlite import SQLiteQueue
+from aqm.meeting import list_meetings
 
 
 def create_app(project_root: Path) -> FastAPI:
@@ -70,10 +71,21 @@ def create_app(project_root: Path) -> FastAPI:
         queue = _get_queue()
         try:
             tasks = queue.list_tasks()
+            meetings = list_meetings(project_root)
+            return render_dashboard(tasks, meetings=meetings)
+        finally:
+            queue.close()
+
+    @app.get("/tasks", response_class=HTMLResponse)
+    async def tasks_page(pipeline: str | None = None):
+        from aqm.web.pages.tasks import render_tasks
+        queue = _get_queue()
+        try:
+            tasks = queue.list_tasks()
             pipelines = list_pipelines(project_root)
             current = pipeline or get_default_pipeline(project_root) or "default"
             agents, agent_error = _get_agents(current)
-            return render_dashboard(
+            return render_tasks(
                 tasks, agents,
                 pipelines=pipelines, current_pipeline=current,
                 agent_error=agent_error,

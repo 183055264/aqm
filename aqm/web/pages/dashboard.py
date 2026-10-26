@@ -1,451 +1,165 @@
-"""Dashboard page — task stats, run pipeline form, task list with filtering/sorting."""
+"""Dashboard page — pure overview with task stats, meeting stats, and recent activity."""
 
 from __future__ import annotations
 
-from aqm.core.agent import AgentDefinition
 from aqm.core.task import Task, TaskStatus
+from aqm.meeting import Meeting
 from aqm.web.templates import badge, esc, fmt_time, layout
 
 
 def render_dashboard(
     tasks: list[Task],
-    agents: dict[str, AgentDefinition],
-    pipelines: list[str] | None = None,
-    current_pipeline: str = "default",
-    agent_error: str | None = None,
+    meetings: list[Meeting] | None = None,
 ) -> str:
+    # Task stats
     total = len(tasks)
     completed = sum(1 for t in tasks if t.status == TaskStatus.completed)
     failed = sum(1 for t in tasks if t.status == TaskStatus.failed)
     awaiting = sum(1 for t in tasks if t.status == TaskStatus.awaiting_gate)
     running = sum(1 for t in tasks if t.status == TaskStatus.in_progress)
 
-    # Pipeline selector
-    pipeline_selector = ""
-    if pipelines and len(pipelines) > 1:
-        pipe_options = "".join(
-            f'<option value="{esc(p)}"{"selected" if p == current_pipeline else ""}>{esc(p)}</option>'
-            for p in pipelines
-        )
-        pipeline_selector = f"""\
-<div class="card" style="margin-bottom:16px;padding:12px 16px;display:flex;align-items:center;gap:12px;">
-  <label style="font-weight:600;white-space:nowrap;">流水线:</label>
-  <select id="pipelineSelector" onchange="location.href='/?pipeline='+this.value"
-          style="flex:1;max-width:300px;">{pipe_options}</select>
-  <span style="font-size:12px;opacity:.6;">{len(pipelines)} 条流水线</span>
-</div>"""
+    # Meeting stats
+    meetings = meetings or []
+    m_total = len(meetings)
+    m_active = sum(1 for m in meetings if m.status == "running")
+    m_completed = sum(1 for m in meetings if m.status == "completed")
 
-    error_banner = ""
-    if agent_error:
-        error_banner = (
-            f'<div class="card" style="background:var(--surface2);border-left:4px solid var(--orange);'
-            f'padding:12px 16px;margin-bottom:16px;">'
-            f'<strong style="color:var(--orange);">警告: 流水线配置错误</strong>'
-            f'<p style="margin:6px 0 0;font-size:13px;opacity:.85;">{esc(agent_error)}</p>'
-            f'</div>'
-        )
-
-    stats = f"""\
-{pipeline_selector}
-{error_banner}
+    task_stats = f"""\
 <div class="stats" id="statsCards">
-  <div class="stat-card"><div class="value" id="statTotal">{total}</div><div class="label">总计</div></div>
+  <div class="stat-card"><div class="value" id="statTotal">{total}</div><div class="label">任务总数</div></div>
   <div class="stat-card blue"><div class="value" id="statRunning">{running}</div><div class="label">运行中</div></div>
   <div class="stat-card green"><div class="value" id="statCompleted">{completed}</div><div class="label">已完成</div></div>
   <div class="stat-card red"><div class="value" id="statFailed">{failed}</div><div class="label">失败</div></div>
   <div class="stat-card orange"><div class="value" id="statAwaiting">{awaiting}</div><div class="label">等待审批</div></div>
 </div>"""
 
-    # Agent options for dropdown
-    agent_options = "".join(
-        f'<option value="{esc(a.id)}">{esc(a.name)} ({esc(a.id)})</option>'
-        for a in agents.values()
-    )
-
-    # Unique agents from tasks for filter
-    task_agents = sorted(set(t.current_agent_id for t in tasks if t.current_agent_id))
-    agent_filter_options = "".join(f'<option value="{esc(a)}">{esc(a)}</option>' for a in task_agents)
-
-    # Run pipeline form
-    form = f"""\
-<div class="card">
-  <h3>运行流水线</h3>
-  <form id="runForm" style="margin-top:12px;">
-    <div class="form-group">
-      <label for="runDesc">任务描述</label>
-      <textarea id="runDesc" placeholder="描述你希望流水线执行的任务..."></textarea>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-      <div class="form-group">
-        <label for="runAgent">起始代理</label>
-        <select id="runAgent"><option value="">默认 (第一个代理)</option>{agent_options}</select>
-      </div>
-      <div class="form-group">
-        <label for="runPriority">优先级</label>
-        <select id="runPriority">
-          <option value="critical">紧急</option>
-          <option value="high">高</option>
-          <option value="normal" selected>普通</option>
-          <option value="low">低</option>
-        </select>
-      </div>
-    </div>
-    <button type="submit" class="btn btn-primary">开始运行</button>
-  </form>
+    meeting_stats = f"""\
+<div class="stats" style="margin-top:-12px;">
+  <div class="stat-card"><div class="value">{m_total}</div><div class="label">会议总数</div></div>
+  <div class="stat-card blue"><div class="value">{m_active}</div><div class="label">进行中</div></div>
+  <div class="stat-card green"><div class="value">{m_completed}</div><div class="label">已完成</div></div>
 </div>"""
 
-    # Filter bar
-    filter_bar = f"""\
-<div class="filter-bar">
-  <div class="form-group">
-    <label>状态</label>
-    <select id="filterStatus" onchange="applyFilters()" style="width:140px;">
-      <option value="">全部</option>
-      <option value="pending">待处理</option>
-      <option value="in_progress">运行中</option>
-      <option value="completed">已完成</option>
-      <option value="failed">失败</option>
-      <option value="awaiting_gate">等待审批</option>
-      <option value="awaiting_human_input">等待输入</option>
-      <option value="cancelled">已取消</option>
-      <option value="stalled">停滞</option>
-    </select>
-  </div>
-  <div class="form-group">
-    <label>代理</label>
-    <select id="filterAgent" onchange="applyFilters()" style="width:140px;">
-      <option value="">全部</option>
-      {agent_filter_options}
-    </select>
-  </div>
-  <div class="form-group">
-    <label>优先级</label>
-    <select id="filterPriority" onchange="applyFilters()" style="width:120px;">
-      <option value="">全部</option>
-      <option value="critical">紧急</option>
-      <option value="high">高</option>
-      <option value="normal">普通</option>
-      <option value="low">低</option>
-    </select>
-  </div>
-  <div class="form-group flex-1">
-    <label>搜索</label>
-    <input id="filterSearch" type="text" placeholder="搜索描述..." oninput="applyFilters()">
-  </div>
-</div>"""
-
-    # Batch action bar
-    batch_bar = """\
-<div class="batch-bar" id="batchBar">
-  <span class="count" id="batchCount">已选择 0 项</span>
-  <button class="btn btn-sm btn-red" onclick="batchCancel()">取消选中</button>
-  <button class="btn btn-sm" onclick="batchRestart()">重启选中</button>
-  <button class="btn btn-sm" onclick="clearSelection()">清除</button>
-</div>"""
-
-    # Task table
-    if not tasks:
-        table_body = """\
+    # Recent tasks (top 10)
+    recent_tasks = tasks[:10]
+    if not recent_tasks:
+        recent_tasks_html = """\
 <div class="empty-state">
   <div class="icon">📋</div>
   <div class="title">暂无任务</div>
-  <div class="desc">在上方运行一条流水线来创建第一个任务。</div>
+  <div class="desc"><a href="/tasks">运行一条流水线来创建第一个任务。</a></div>
 </div>"""
-        table = f'<h2 style="margin-top:24px;">任务</h2>\n{table_body}'
     else:
-        row_list = []
-        for t in tasks:
-            desc = esc(t.description[:60])
-            if len(t.description) > 60:
+        rows = []
+        for t in recent_tasks:
+            desc = esc(t.description[:80])
+            if len(t.description) > 80:
                 desc += "..."
             agent = esc(t.current_agent_id or "-")
             p_name = t.priority.name
-
-            # Quick actions dropdown
-            actions_items = f'<a href="/tasks/{esc(t.id)}">查看</a>'
-            if t.status in (TaskStatus.completed, TaskStatus.failed):
-                actions_items += f'<button onclick="showFixForm(\'{esc(t.id)}\')">修复</button>'
-            if t.status in (TaskStatus.failed, TaskStatus.completed, TaskStatus.stalled, TaskStatus.cancelled):
-                actions_items += f'<button onclick="restartTask(\'{esc(t.id)}\')">重启</button>'
-            if t.status == TaskStatus.awaiting_gate:
-                actions_items += f'<a href="/tasks/{esc(t.id)}">审批/拒绝</a>'
-            if t.status in (TaskStatus.pending, TaskStatus.in_progress, TaskStatus.awaiting_gate, TaskStatus.awaiting_human_input):
-                actions_items += f'<div class="divider"></div><button class="danger" onclick="showCancelModal(\'{esc(t.id)}\')">取消</button>'
-
-            row_list.append(
-                f'<tr data-status="{esc(t.status.value)}" data-agent="{agent}" '
-                f'data-desc="{esc(t.description.lower())}" data-priority="{p_name}" '
-                f'data-created="{t.created_at.isoformat() if t.created_at else ""}" data-id="{esc(t.id)}">'
-                f'<td><input type="checkbox" class="row-check" onchange="updateBatch()"></td>'
+            rows.append(
+                f'<tr>'
                 f'<td><a href="/tasks/{esc(t.id)}">{esc(t.id)}</a></td>'
                 f'<td>{badge(t.status.value)}</td>'
                 f'<td style="font-size:12px;color:var(--text-dim);">{p_name}</td>'
                 f'<td>{agent}</td>'
-                f'<td title="{esc(t.description)}">{desc}</td>'
-                f'<td>{len(t.stages)}</td>'
+                f'<td title="{esc(t.description)}" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{desc}</td>'
                 f'<td style="font-size:12px;">{fmt_time(t.created_at)}</td>'
-                f'<td>'
-                 f'<div class="dropdown">'
-                 f'<button class="btn btn-sm" onclick="toggleDropdown(this)">操作</button>'
-                 f'<div class="dropdown-menu">{actions_items}</div>'
-                f'</div></td>'
                 f'</tr>'
             )
-        rows = "\n".join(row_list)
-
-        table = f"""\
-<h2 style="margin-top:24px;">任务</h2>
-{filter_bar}
-{batch_bar}
-<div class="table-wrap">
-<table id="taskTable">
-<thead><tr>
-  <th style="width:32px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
-  <th data-sort="id">ID <span class="sort-icon"></span></th>
-  <th data-sort="status">状态 <span class="sort-icon"></span></th>
-  <th data-sort="priority">优先级 <span class="sort-icon"></span></th>
-  <th data-sort="agent">代理 <span class="sort-icon"></span></th>
-  <th>描述</th>
-  <th data-sort="stages">阶段 <span class="sort-icon"></span></th>
-  <th data-sort="created">创建时间 <span class="sort-icon"></span></th>
-  <th>操作</th>
-</tr></thead>
-<tbody id="taskBody">{rows}</tbody>
-</table>
-</div>
-<div class="pagination" id="pagination"></div>"""
-
-    # Cancel modal
-    cancel_modal = """\
-<div class="modal-overlay" id="cancelModal">
-  <div class="modal modal-sm">
-    <h3>取消任务</h3>
-    <input type="hidden" id="cancelTaskId">
-    <div class="form-group">
-      <label for="cancelReason">原因 (可选)</label>
-      <input id="cancelReason" type="text" placeholder="为什么要取消?">
-    </div>
-    <div style="display:flex;gap:8px;margin-top:12px;">
-      <button class="btn btn-red" onclick="confirmCancel()">取消任务</button>
-      <button class="btn" onclick="document.getElementById('cancelModal').classList.remove('show')">关闭</button>
-    </div>
+        recent_tasks_html = f"""\
+<div class="card">
+  <h3>最近任务 <a href="/tasks" style="font-size:12px;font-weight:normal;margin-left:8px;">查看全部 →</a></h3>
+  <div class="table-wrap">
+  <table>
+  <thead><tr>
+    <th>ID</th><th>状态</th><th>优先级</th><th>代理</th><th>描述</th><th>创建时间</th>
+  </tr></thead>
+  <tbody>{''.join(rows)}</tbody>
+  </table>
   </div>
 </div>"""
 
-    # Fix modal
-    fix_modal = """\
-<div class="modal-overlay" id="fixModal">
-  <div class="modal">
-    <h3>修复任务 <span id="fixTaskId"></span></h3>
-    <form id="fixForm">
-      <input type="hidden" id="fixParentId">
-      <div class="form-group">
-        <label for="fixDesc">需要修复什么?</label>
-        <textarea id="fixDesc" placeholder="描述需要修复的内容..."></textarea>
-      </div>
-      <button type="submit" class="btn btn-primary">开始修复</button>
-      <button type="button" class="btn" onclick="document.getElementById('fixModal').classList.remove('show')">取消</button>
-    </form>
+    # Recent meetings (top 5)
+    recent_meetings = meetings[:5]
+    if not recent_meetings:
+        recent_meetings_html = """\
+<div class="card">
+  <h3>最近会议 <a href="/meeting" style="font-size:12px;font-weight:normal;margin-left:8px;">查看全部 →</a></h3>
+  <p style="color:var(--text-dim);font-size:13px;">暂无会议记录。</p>
+</div>"""
+    else:
+        m_rows = []
+        for m in recent_meetings:
+            m_status = {
+                "idle": "待开始", "running": "进行中", "completed": "已完成",
+                "stopped": "已停止", "error": "失败"
+            }.get(m.status, m.status)
+            m_badge_color = {
+                "idle": "badge-pending", "running": "badge-in_progress",
+                "completed": "badge-completed", "stopped": "badge-cancelled", "error": "badge-failed"
+            }.get(m.status, "badge-pending")
+            m_agents = ", ".join(a.name for a in m.agents)
+            m_rows.append(
+                f'<tr>'
+                f'<td><a href="/meeting">{esc(m.topic)}</a></td>'
+                f'<td><span class="badge {m_badge_color}">{m_status}</span></td>'
+                f'<td style="font-size:12px;">{esc(m_agents)}</td>'
+                f'<td>{m.current_round}/{m.rounds}</td>'
+                f'<td style="font-size:12px;">{fmt_time(m.created_at)}</td>'
+                f'</tr>'
+            )
+        recent_meetings_html = f"""\
+<div class="card">
+  <h3>最近会议 <a href="/meeting" style="font-size:12px;font-weight:normal;margin-left:8px;">查看全部 →</a></h3>
+  <div class="table-wrap">
+  <table>
+  <thead><tr>
+    <th>主题</th><th>状态</th><th>参会</th><th>轮次</th><th>创建时间</th>
+  </tr></thead>
+  <tbody>{''.join(m_rows)}</tbody>
+  </table>
+  </div>
+</div>"""
+
+    # Quick action cards
+    quick_actions = """\
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:24px;">
+  <div class="card" style="margin:0;display:flex;align-items:center;gap:16px;cursor:pointer;" onclick="location.href='/tasks'">
+    <div style="font-size:32px;">▶</div>
+    <div>
+      <div style="font-weight:600;font-size:15px;">运行流水线</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">创建新的流水线任务</div>
+    </div>
+  </div>
+  <div class="card" style="margin:0;display:flex;align-items:center;gap:16px;cursor:pointer;" onclick="location.href='/meeting'">
+    <div style="font-size:32px;">👥</div>
+    <div>
+      <div style="font-weight:600;font-size:15px;">创建会议</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">多Agent协作讨论</div>
+    </div>
   </div>
 </div>"""
 
     js = """\
 <script>
-/* ── Run form ──────────────────────────────── */
-document.getElementById('runForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const desc = document.getElementById('runDesc').value.trim();
-  if (!desc) return;
-  const agent = document.getElementById('runAgent').value;
-  const priority = document.getElementById('runPriority').value;
-  const pipelineSel = document.getElementById('pipelineSelector');
-  const body = {description: desc, priority: priority};
-  if (agent) body.agent_id = agent;
-  if (pipelineSel) body.pipeline = pipelineSel.value;
-  const btn = e.target.querySelector('button[type=submit]');
-    btn.disabled = true; btn.textContent = '启动中...';
-    try {
-      const data = await apiFetch('/api/run', {method:'POST', body:JSON.stringify(body)});
-      showToast('流水线已启动: ' + data.task_id);
-      setTimeout(() => location.href = '/tasks/' + data.task_id, 600);
-    } catch(err) { btn.disabled = false; btn.textContent = '开始运行'; }
-});
-
-/* ── Fix modal ─────────────────────────────── */
-function showFixForm(taskId) {
-  document.getElementById('fixParentId').value = taskId;
-  document.getElementById('fixTaskId').textContent = taskId;
-  document.getElementById('fixModal').classList.add('show');
-}
-document.getElementById('fixForm')?.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const parentId = document.getElementById('fixParentId').value;
-  const desc = document.getElementById('fixDesc').value.trim();
-  if (!desc) return;
-  try {
-    const data = await apiFetch('/api/fix', {method:'POST', body:JSON.stringify({parent_task_id:parentId, description:desc})});
-      showToast('修复已启动: ' + data.task_id);
-    setTimeout(() => location.href = '/tasks/' + data.task_id, 600);
-  } catch(err) {}
-});
-document.querySelectorAll('.modal-overlay').forEach(m => {
-  m.addEventListener('click', (e) => { if (e.target === m) m.classList.remove('show'); });
-});
-
-/* ── Cancel modal ──────────────────────────── */
-function showCancelModal(taskId) {
-  document.getElementById('cancelTaskId').value = taskId;
-  document.getElementById('cancelReason').value = '';
-  document.getElementById('cancelModal').classList.add('show');
-}
-async function confirmCancel() {
-  const taskId = document.getElementById('cancelTaskId').value;
-  const reason = document.getElementById('cancelReason').value.trim();
-  const body = reason ? {reason} : {};
-  try {
-    await apiFetch('/api/tasks/' + taskId + '/cancel', {method:'POST', body:JSON.stringify(body)});
-    showToast('任务已取消');
-    document.getElementById('cancelModal').classList.remove('show');
-    setTimeout(() => location.reload(), 600);
-  } catch(e) {}
-}
-
-/* ── Restart ───────────────────────────────── */
-async function restartTask(taskId) {
-  try {
-    await apiFetch('/api/tasks/' + taskId + '/restart', {method:'POST', body:'{}'});
-    showToast('任务重启中');
-    setTimeout(() => location.href = '/tasks/' + taskId, 600);
-  } catch(e) {}
-}
-
-/* ── Filtering ─────────────────────────────── */
-function applyFilters() {
-  const status = document.getElementById('filterStatus')?.value || '';
-  const agent = document.getElementById('filterAgent')?.value || '';
-  const priority = document.getElementById('filterPriority')?.value || '';
-  const search = document.getElementById('filterSearch')?.value?.toLowerCase() || '';
-  document.querySelectorAll('#taskBody tr').forEach(row => {
-    const show = (!status || row.dataset.status === status)
-      && (!agent || row.dataset.agent === agent)
-      && (!priority || row.dataset.priority === priority)
-      && (!search || row.dataset.desc?.includes(search));
-    row.style.display = show ? '' : 'none';
-  });
-  paginate();
-}
-
-/* ── Sorting ───────────────────────────────── */
-let sortCol = '', sortAsc = true;
-document.querySelectorAll('th[data-sort]').forEach(th => {
-  th.addEventListener('click', () => {
-    const col = th.dataset.sort;
-    if (sortCol === col) { sortAsc = !sortAsc; } else { sortCol = col; sortAsc = true; }
-    const tbody = document.getElementById('taskBody');
-    if (!tbody) return;
-    const rows = Array.from(tbody.querySelectorAll('tr'));
-    rows.sort((a, b) => {
-      let av = a.dataset[col] || '';
-      let bv = b.dataset[col] || '';
-      if (col === 'stages') { av = a.children[6]?.textContent||'0'; bv = b.children[6]?.textContent||'0'; return sortAsc ? av-bv : bv-av; }
-      return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
-    });
-    rows.forEach(r => tbody.appendChild(r));
-    // Update sort icons
-    document.querySelectorAll('th[data-sort] .sort-icon').forEach(s => s.textContent = '');
-    th.querySelector('.sort-icon').textContent = sortAsc ? ' ▲' : ' ▼';
-    paginate();
-  });
-});
-
-/* ── Pagination ────────────────────────────── */
-const PAGE_SIZE = 25;
-let currentPage = 1;
-function paginate() {
-  const rows = Array.from(document.querySelectorAll('#taskBody tr')).filter(r => r.style.display !== 'none');
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  if (currentPage > totalPages) currentPage = totalPages;
-  rows.forEach((row, i) => {
-    row.style.display = (i >= (currentPage-1)*PAGE_SIZE && i < currentPage*PAGE_SIZE) ? '' : 'none';
-  });
-  const pag = document.getElementById('pagination');
-  if (!pag || rows.length <= PAGE_SIZE) { if(pag) pag.innerHTML = ''; return; }
-  let html = '<button '+(currentPage<=1?'disabled':'')+' onclick="goPage('+(currentPage-1)+')">上一页</button>';
-  for (let p = 1; p <= totalPages; p++) {
-    html += '<button class="'+(p===currentPage?'active':'')+'" onclick="goPage('+p+')">'+p+'</button>';
-  }
-  html += '<button '+(currentPage>=totalPages?'disabled':'')+' onclick="goPage('+(currentPage+1)+')">下一页</button>';
-  html += '<span class="info">'+rows.length+' 个任务</span>';
-  pag.innerHTML = html;
-}
-function goPage(p) { currentPage = p; applyFilters(); }
-
-/* ── Batch selection ───────────────────────── */
-function toggleSelectAll(el) {
-  document.querySelectorAll('#taskBody .row-check').forEach(cb => {
-    if (cb.closest('tr').style.display !== 'none') cb.checked = el.checked;
-  });
-  updateBatch();
-}
-function updateBatch() {
-  const checked = document.querySelectorAll('#taskBody .row-check:checked');
-  const bar = document.getElementById('batchBar');
-  if (!bar) return;
-  if (checked.length > 0) {
-    bar.classList.add('show');
-    document.getElementById('batchCount').textContent = checked.length + ' 项已选择';
-  } else {
-    bar.classList.remove('show');
-  }
-}
-function getSelectedIds() {
-  return Array.from(document.querySelectorAll('#taskBody .row-check:checked'))
-    .map(cb => cb.closest('tr').dataset.id);
-}
-function clearSelection() {
-  document.querySelectorAll('#taskBody .row-check').forEach(cb => cb.checked = false);
-  document.getElementById('selectAll').checked = false;
-  updateBatch();
-}
-async function batchCancel() {
-  const ids = getSelectedIds();
-  if (!ids.length || !confirm('取消 ' + ids.length + ' 个任务?')) return;
-  for (const id of ids) {
-    try { await apiFetch('/api/tasks/' + id + '/cancel', {method:'POST', body:'{}'}); } catch(e) {}
-  }
-  showToast('已取消 ' + ids.length + ' 个任务');
-  setTimeout(() => location.reload(), 600);
-}
-async function batchRestart() {
-  const ids = getSelectedIds();
-  if (!ids.length || !confirm('重启 ' + ids.length + ' 个任务?')) return;
-  for (const id of ids) {
-    try { await apiFetch('/api/tasks/' + id + '/restart', {method:'POST', body:'{}'}); } catch(e) {}
-  }
-  showToast('正在重启 ' + ids.length + ' 个任务');
-  setTimeout(() => location.reload(), 600);
-}
-
 /* ── SSE real-time counters ────────────────── */
 try {
   const es = new EventSource('/api/events');
   es.addEventListener('task_count_update', (e) => {
     const d = JSON.parse(e.data);
-    if (d.total !== undefined) document.getElementById('statTotal').textContent = d.total;
-    if (d.running !== undefined) document.getElementById('statRunning').textContent = d.running;
-    if (d.completed !== undefined) document.getElementById('statCompleted').textContent = d.completed;
-    if (d.failed !== undefined) document.getElementById('statFailed').textContent = d.failed;
-    if (d.awaiting !== undefined) document.getElementById('statAwaiting').textContent = d.awaiting;
+    if (d.total !== undefined) document.getElementById('statTotal')?.replaceChildren(d.total);
+    if (d.running !== undefined) document.getElementById('statRunning')?.replaceChildren(d.running);
+    if (d.completed !== undefined) document.getElementById('statCompleted')?.replaceChildren(d.completed);
+    if (d.failed !== undefined) document.getElementById('statFailed')?.replaceChildren(d.failed);
+    if (d.awaiting !== undefined) document.getElementById('statAwaiting')?.replaceChildren(d.awaiting);
   });
   es.onerror = () => {};
 } catch(e) {}
-
-/* Init pagination */
-paginate();
 </script>"""
 
     return layout(
-        "看板",
-        f"<h1>看板</h1>\n{stats}\n{form}\n{table}\n{cancel_modal}\n{fix_modal}\n{js}",
-        active="tasks",
+        "概览",
+        f"{task_stats}\n{meeting_stats}\n{quick_actions}\n{recent_tasks_html}\n{recent_meetings_html}\n{js}",
+        active="dashboard",
     )

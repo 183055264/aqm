@@ -433,12 +433,13 @@ window.addEventListener('unhandledrejection', function(e) {
 
 def sidebar_html(active: str = "") -> str:
     links = [
-        ("/", "看板", "tasks", "tasks"),
+        ("/", "概览", "dashboard", "dashboard"),
+        ("/tasks", "任务", "tasks", "tasks"),
+        ("/meeting", "会议", "meeting", "meeting"),
         ("/agents", "代理", "agents", "agents"),
         ("/pipelines", "流水线", "pipelines", "pipelines"),
         ("/registry", "注册表", "registry", "registry"),
         ("/validate", "校验", "validate", "validate"),
-        ("/meeting", "会议", "meeting", "meeting"),
     ]
     items = []
     for href, label, key, icon_key in links:

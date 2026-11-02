@@ -6,6 +6,8 @@ This module just wires everything together.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -274,66 +276,122 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
             "new_project": str(new_root),
         }
 
+    # ── Restart Status File ───────────────────────────────────────────
+    
+    _restart_status_file = os.path.join(
+        tempfile.gettempdir(), "aqm_restart_status.json"
+    )
+    
+    def _write_restart_status(status: str, detail: str = "", suggestion: str = ""):
+        """Write restart status to file for frontend to poll."""
+        import json
+        try:
+            with open(_restart_status_file, "w", encoding="utf-8") as f:
+                json.dump({"status": status, "detail": detail, "suggestion": suggestion}, f)
+        except Exception:
+            pass
+    
+    def _clear_restart_status():
+        """Clear restart status file."""
+        try:
+            if os.path.exists(_restart_status_file):
+                os.remove(_restart_status_file)
+        except Exception:
+            pass
+    
+    @app.get("/api/project/restart-status")
+    async def api_restart_status():
+        """Get current restart status."""
+        import json
+        try:
+            if os.path.exists(_restart_status_file):
+                with open(_restart_status_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return data
+            return {"status": "idle"}
+        except Exception:
+            return {"status": "unknown"}
+    
     @app.post("/api/project/restart")
     async def api_restart_server():
-        """Restart server with new project configuration."""
+        """Restart server with new project configuration.
+        
+        Writes detailed status to a file that the frontend can poll.
+        """
         import subprocess
         import sys
         import threading
         import time
-        import os
         import platform
+        import shutil
         
         # Get the current project root from config
         from aqm.core.config import get_default_project
         new_project = get_default_project()
         
         if new_project is None:
-            return {"status": "error", "message": "没有保存的项目配置"}
+            return {"status": "error", "detail": "没有保存的项目配置", "suggestion": "请先切换项目"}
         
         # Get current server config
         host = app.state.host
         port = app.state.port
+        
+        # Write "restarting" status immediately
+        _write_restart_status("restarting", "正在准备重启...", "")
         
         def _restart_in_background():
             """Stop old server, then start new server."""
             try:
                 # Find aqm executable in the venv
                 venv_scripts = os.path.dirname(sys.executable)
-                aqm_exe = os.path.join(venv_scripts, "aqm.exe")
-                
-                # Use aqm.exe if available, otherwise try python -m aqm.cli
-                if os.path.exists(aqm_exe):
-                    cmd = [
-                        aqm_exe, "--project", str(new_project),
-                        "serve", "--port", str(port),
-                        "--host", host
-                    ]
-                else:
-                    # Fallback: try aqm.cli module
-                    cmd = [
-                        sys.executable, "-m", "aqm.cli", "serve",
-                        "--project", str(new_project),
-                        "--port", str(port),
-                        "--host", host
-                    ]
-                
                 is_windows = platform.system() == "Windows"
+                
+                # Try to find aqm executable
+                if is_windows:
+                    aqm_exe = os.path.join(venv_scripts, "aqm.exe")
+                else:
+                    aqm_exe = os.path.join(venv_scripts, "aqm")
+                
+                # Build command
+                if os.path.exists(aqm_exe):
+                    exe_path = aqm_exe
+                    cmd = [exe_path, "--project", str(new_project), "serve", "--port", str(port), "--host", host]
+                else:
+                    # Fallback: python -m aqm.cli
+                    python_path = sys.executable
+                    if not os.path.exists(python_path):
+                        raise FileNotFoundError(f"Python 可执行文件未找到: {python_path}")
+                    cmd = [python_path, "-m", "aqm.cli", "serve", "--project", str(new_project), "--port", str(port), "--host", host]
+                    exe_path = python_path
+                
+                # Write "creating script" status
+                _write_restart_status("creating_script", f"命令: {' '.join(cmd)}", "")
                 
                 if is_windows:
                     # Windows: create .bat script
+                    # Write error log to temp file
+                    log_file = os.path.join(tempfile.gettempdir(), "aqm_restart.log")
                     restart_script = f"""@echo off
 chcp 65001 >nul
-echo Restarting aqm server...
+echo Restarting aqm server... > "{log_file}"
+echo Command: {" ".join(cmd)} >> "{log_file}"
+echo Timestamp: %date% %time% >> "{log_file}"
 timeout /t 3 /nobreak >nul
-echo Starting new server on port {port}...
-{" ".join(cmd)}
+echo Starting new server on port {port}... >> "{log_file}"
+{" ".join(cmd)} >> "{log_file}" 2>&1
+echo Server exited with code %errorlevel% >> "{log_file}"
 """
-                    import tempfile
                     temp_dir = tempfile.gettempdir()
                     restart_script_path = os.path.join(temp_dir, "aqm_restart.bat")
                     with open(restart_script_path, "w", encoding="utf-8") as f:
                         f.write(restart_script)
+                    
+                    # Write "starting process" status
+                    _write_restart_status("starting_process", f"脚本: {restart_script_path}", "")
+                    
+                    # Check if script can be executed
+                    if not os.path.exists(restart_script_path):
+                        raise FileNotFoundError(f"重启脚本创建失败: {restart_script_path}")
                     
                     subprocess.Popen(
                         [restart_script_path],
@@ -342,17 +400,25 @@ echo Starting new server on port {port}...
                     )
                 else:
                     # Unix: create .sh script
+                    log_file = os.path.join(tempfile.gettempdir(), "aqm_restart.log")
                     restart_script = f"""#!/bin/bash
-echo "Restarting aqm server..."
+echo "Restarting aqm server..." > "{log_file}"
+echo "Command: {' '.join(cmd)}" >> "{log_file}"
+echo "Timestamp: $(date)" >> "{log_file}"
 sleep 3
-echo "Starting new server on port {port}..."
-{" ".join(cmd)}
+echo "Starting new server on port {port}..." >> "{log_file}"
+{' '.join(cmd)} >> "{log_file}" 2>&1
+echo "Server exited with code $?"/>>> "{log_file}"
 """
-                    import tempfile
                     temp_dir = tempfile.gettempdir()
                     restart_script_path = os.path.join(temp_dir, "aqm_restart.sh")
                     with open(restart_script_path, "w", encoding="utf-8") as f:
                         f.write(restart_script)
+                    
+                    _write_restart_status("starting_process", f"脚本: {restart_script_path}", "")
+                    
+                    if not os.path.exists(restart_script_path):
+                        raise FileNotFoundError(f"重启脚本创建失败: {restart_script_path}")
                     
                     os.chmod(restart_script_path, 0o755)
                     subprocess.Popen(
@@ -360,11 +426,22 @@ echo "Starting new server on port {port}..."
                         preexec_fn=os.setsid
                     )
                 
+                # Write "success" status before exiting
+                _write_restart_status("success", "服务器已停止，新服务器正在启动", "")
+                
                 # Stop old server (this process)
                 time.sleep(0.5)
                 os._exit(0)
+            except FileNotFoundError as e:
+                _write_restart_status("failed", str(e), "确保 aqm 已正确安装，可执行文件存在于虚拟环境的 Scripts/bin 目录")
+                os._exit(0)
+            except PermissionError as e:
+                _write_restart_status("failed", str(e), "检查脚本权限或尝试以管理员身份运行")
+                os._exit(0)
             except Exception as e:
-                print(f"Restart failed: {e}")
+                import traceback
+                error_detail = str(e) + "\n" + traceback.format_exc()
+                _write_restart_status("failed", error_detail[:500], "查看日志文件: " + os.path.join(tempfile.gettempdir(), "aqm_restart.log"))
                 os._exit(0)
         
         # Start restart in background thread
@@ -373,6 +450,7 @@ echo "Starting new server on port {port}..."
         return {
             "status": "restarting",
             "message": "服务器正在重启，请稍后刷新页面...",
+            "poll_url": "/api/project/restart-status",
         }
 
     # ── API Routes ────────────────────────────────────────────────────

@@ -314,7 +314,7 @@ ICONS = {
 
 JS_UTILS = """\
 /* ── Toast ─────────────────────────────────── */
-function showToast(msg, type='success', action) {
+function showToast(msg, type='success', action, duration=4000) {
   const c = document.getElementById('toastContainer');
   if (!c) return;
   const t = document.createElement('div');
@@ -329,7 +329,7 @@ function showToast(msg, type='success', action) {
     t.appendChild(a);
   }
   c.appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 4000);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, duration);
 }
 
 /* ── API Fetch ─────────────────────────────── */
@@ -438,8 +438,9 @@ function showProjectSwitch() {
         const p = recent[i];
         const parts = p.split(new RegExp(String.fromCharCode(92) + '|/'));
         const name = parts[parts.length - 1];
-        // Use data attribute to store path, avoid quote escaping issues
-        html += '<div class="recent-project-item" data-path="' + p + '" ' +
+        // Escape backslashes for safe embedding in data attribute
+        const safeP = p.split(String.fromCharCode(92)).join(String.fromCharCode(92) + String.fromCharCode(92));
+        html += '<div class="recent-project-item" data-path="' + safeP + '" ' +
                 'style="padding:6px 8px;border-radius:4px;cursor:pointer;font-size:12px;">' +
                 '<div style="font-weight:600;">' + name + '</div>' +
                 '<div style="color:var(--text-dim);font-size:11px;">' + p + '</div>' +
@@ -451,8 +452,11 @@ function showProjectSwitch() {
         item.addEventListener('mouseover', () => item.style.background = 'var(--surface2)');
         item.addEventListener('mouseout', () => item.style.background = '');
         item.addEventListener('click', () => {
-          document.getElementById('projectInput').value = item.dataset.path;
+          // Unescape backslashes
+          const path = (item.dataset.path || '').split(String.fromCharCode(92) + String.fromCharCode(92)).join(String.fromCharCode(92));
+          document.getElementById('projectInput').value = path;
           hideProjectSwitch();
+          switchProject();
         });
       });
     } else {
@@ -463,6 +467,38 @@ function showProjectSwitch() {
 function hideProjectSwitch() {
   document.getElementById('projectSwitchModal')?.classList.remove('show');
 }
+// Restart status polling
+function pollRestartStatus(interval, maxAttempts) {
+  let attempts = 0;
+  const timer = setInterval(async () => {
+    attempts++;
+    try {
+      const res = await fetch('/api/project/restart-status');
+      const data = await res.json();
+      
+      if (data.status === 'success') {
+        clearInterval(timer);
+        showToast('服务器重启成功，正在刷新页面...', 'success');
+        setTimeout(() => location.reload(), 1000);
+      } else if (data.status === 'failed') {
+        clearInterval(timer);
+        const detail = data.detail || '未知错误';
+        const suggestion = data.suggestion || '';
+        const msg = detail.length > 200 ? detail.substring(0, 200) + '...' : detail;
+        showToast('重启失败: ' + msg + (suggestion ? '\\n\\n建议: ' + suggestion : ''), 'error', null, 10000);
+      } else if (attempts > maxAttempts) {
+        clearInterval(timer);
+        showToast('重启超时，请检查服务器状态后手动刷新', 'error');
+      }
+    } catch (e) {
+      if (attempts > maxAttempts) {
+        clearInterval(timer);
+        showToast('无法连接服务器，重启可能已完成', 'info');
+      }
+    }
+  }, interval);
+}
+
 async function switchProject() {
   const path = document.getElementById('projectInput').value.trim();
   if (!path) return;
@@ -487,11 +523,12 @@ async function switchProject() {
     // Call restart API - server will start new instance and stop old one
     const res2 = await fetch('/api/project/restart', {method:'POST'});
     if (res2.ok) {
-      showToast('服务器正在重启，请稍后刷新页面...', 'success');
-      // Try to reload after a delay (may fail if server is stopping)
-      setTimeout(() => location.reload(), 5000);
+      showToast('服务器正在重启，请稍后...', 'info');
+      // Poll for restart status
+      pollRestartStatus(2000, 30); // Check every 2s, max 60s
     } else {
-      showToast('重启失败，请手动重启服务器', 'error');
+      const errData = await res2.json().catch(() => ({}));
+      showToast('重启失败: ' + (errData.detail || '请手动重启服务器'), 'error');
     }
   } catch(e) {
     showToast('请求失败: ' + e.message, 'error');
@@ -518,10 +555,11 @@ async function initAndSwitchProject(path) {
     // Call restart API
     const res3 = await fetch('/api/project/restart', {method:'POST'});
     if (res3.ok) {
-      showToast('服务器正在重启，请稍后刷新页面...', 'success');
-      setTimeout(() => location.reload(), 5000);
+      showToast('服务器正在重启，请稍后...', 'info');
+      pollRestartStatus(2000, 30);
     } else {
-      showToast('重启失败，请手动重启服务器', 'error');
+      const errData = await res3.json().catch(() => ({}));
+      showToast('重启失败: ' + (errData.detail || '请手动重启服务器'), 'error');
     }
   } catch(e) {
     showToast('请求失败: ' + e.message, 'error');
@@ -536,6 +574,23 @@ function loadProjectInfo() {
       el.textContent = parts[parts.length - 1];
     }
   }).catch(() => {});
+}
+// Restart server
+async function restartServer() {
+  if (!confirm('确定要重启服务器吗？')) return;
+  showToast('正在重启服务器...', 'info');
+  try {
+    const res = await fetch('/api/project/restart', {method:'POST'});
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      showToast('服务器正在重启，请稍后...', 'info');
+      pollRestartStatus(2000, 30);
+    } else {
+      showToast('重启失败: ' + (data.detail || '请手动重启服务器'), 'error');
+    }
+  } catch(e) {
+    showToast('重启失败: ' + e.message, 'error');
+  }
 }
 loadProjectInfo();
 """
@@ -574,6 +629,9 @@ def sidebar_html(active: str = "") -> str:
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
       <div style="font-size:11px;color:var(--text-dim);word-break:break-all;" id="projectPath">加载中...</div>
       <button class="btn btn-sm" style="padding:2px 8px;font-size:11px;" onclick="showProjectSwitch()" title="切换项目">切换</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+      <button class="btn btn-sm" style="padding:2px 8px;font-size:11px;flex:1;" onclick="restartServer()" title="重启服务">重启服务</button>
     </div>
     <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">aqm v1.3.0</div>
   </div>
@@ -658,7 +716,7 @@ def layout(
     <h3>切换项目</h3>
     <div class="form-group">
       <label for="projectInput">项目路径</label>
-      <input id="projectInput" type="text" placeholder="输入项目目录路径，如 D:\my-project">
+      <input id="projectInput" type="text" placeholder="输入项目目录路径，如 D:\\my-project">
       <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">提示：浏览器安全限制，需手动输入路径</div>
     </div>
     <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">最近项目：</div>

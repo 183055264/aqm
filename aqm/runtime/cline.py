@@ -233,6 +233,8 @@ class ClineRuntime(AbstractRuntime):
                 capture_output=True,
 
                 text=True,
+                encoding="utf-8",
+                errors="replace",
 
                 timeout=self._timeout,
 
@@ -323,6 +325,8 @@ class ClineRuntime(AbstractRuntime):
             stderr=subprocess.PIPE,
 
             text=True,
+            encoding="utf-8",
+            errors="replace",
 
             cwd=str(self._project_root),
 

@@ -27,6 +27,7 @@ from aqm.registry import (
     pull_from_github,
     pull_from_local,
     save_to_local_registry,
+    version_sort_key,
 )
 
 
@@ -63,6 +64,10 @@ class TestVersionParsing:
 
     def test_increment_short_version(self):
         assert increment_version("1.0") == "1.0.1"
+
+    def test_versions_sort_numerically(self):
+        versions = ["1.9.0", "1.10.0", "1.2.0"]
+        assert sorted(versions, key=version_sort_key) == ["1.2.0", "1.9.0", "1.10.0"]
 
 
 # ═══════════════════════════════════════════════════════════════════════

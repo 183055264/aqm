@@ -153,6 +153,8 @@ class OpencodeRuntime(AbstractRuntime):
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=self._timeout,
                 cwd=str(self._project_root),
             )
@@ -203,6 +205,8 @@ class OpencodeRuntime(AbstractRuntime):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(self._project_root),
         )
         parser = JsonStreamParser(

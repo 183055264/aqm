@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -81,6 +82,26 @@ def increment_version(version: str) -> str:
         parts.append(0)
     parts[2] += 1
     return ".".join(str(p) for p in parts[:3])
+
+
+def version_sort_key(version: str) -> tuple:
+    """Return a semantic sort key for numeric versions with optional prerelease."""
+    match = re.fullmatch(
+        r"[vV]?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?",
+        version,
+    )
+    if not match:
+        return (0, 0, 0, 0, 0, ((1, version.casefold()),))
+    major, minor, patch = (int(match.group(i)) for i in range(1, 4))
+    prerelease = match.group(4)
+    if prerelease is None:
+        prerelease_key = ()
+    else:
+        prerelease_key = tuple(
+            (0, int(part)) if part.isdigit() else (1, part.casefold())
+            for part in prerelease.split(".")
+        )
+    return (1, major, minor, patch, int(prerelease is None), prerelease_key)
 
 
 # ── URL helpers ───────────────────────────────────────────────────────
@@ -175,8 +196,8 @@ def save_to_local_registry(
 
     if version not in vdata["versions"]:
         vdata["versions"].append(version)
-        vdata["versions"].sort(key=lambda v: [int(x) for x in v.split(".")] if all(p.isdigit() for p in v.split(".")) else [0])
-    vdata["latest"] = version
+    vdata["versions"].sort(key=version_sort_key)
+    vdata["latest"] = max(vdata["versions"], key=version_sort_key)
 
     versions_path.write_text(json.dumps(vdata, indent=2), encoding="utf-8")
     return ver_dir
@@ -501,7 +522,8 @@ def publish_to_github(
     if version is None:
         existing = list_versions(pipeline_name, repo)
         all_versions = sorted(
-            set(existing.get("github", []) + existing.get("local", []))
+            set(existing.get("github", []) + existing.get("local", [])),
+            key=version_sort_key,
         )
         if all_versions:
             version = increment_version(all_versions[-1])
@@ -584,7 +606,8 @@ def publish_to_github(
 
         if version not in vdata["versions"]:
             vdata["versions"].append(version)
-        vdata["latest"] = version
+        vdata["versions"].sort(key=version_sort_key)
+        vdata["latest"] = max(vdata["versions"], key=version_sort_key)
         versions_path.write_text(
             json.dumps(vdata, indent=2) + "\n", encoding="utf-8"
         )

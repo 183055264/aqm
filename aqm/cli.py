@@ -27,6 +27,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from aqm import __version__
 from aqm.core.agent import load_agents
 from aqm.core.project import (
     AVAILABLE_MODELS,
@@ -207,6 +208,7 @@ def _get_queue(root: Path):
 
 
 @click.group()
+@click.version_option(version=__version__, prog_name="aqm")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging")
 @click.option("--project", type=click.Path(), default=None, help="Project directory (default: current directory or auto-detect)")
 def cli(verbose: bool, project: str | None) -> None:
@@ -672,10 +674,20 @@ def run(input_text: str, agent: str | None, params: tuple[str, ...], priority: s
     from aqm.core.config import load_project_config
     from aqm.core.pipeline import Pipeline
 
-    pipeline = Pipeline(agents, queue, root, config=load_project_config(root))
+    project_config = load_project_config(root)
+    pipeline = Pipeline(
+        agents,
+        queue,
+        root,
+        config=project_config,
+        resident_agents=project_config.pipeline.get("resident_agents", True),
+    )
 
     task_priority = TaskPriority[priority]
-    task_metadata = {"pipeline": pipeline_name} if pipeline_name else {}
+    task_metadata = {
+        "pipeline": pipeline_name or project_config.default_pipeline or "default",
+        "_pipeline_params": cli_params,
+    }
     task = Task(description=input_text, priority=task_priority, metadata=task_metadata)
     queue.push(task, start_agent)
 
@@ -982,12 +994,22 @@ def approve(task_id: str, reason: str) -> None:
     queue = _get_queue(root)
     task = queue.get(task_id)
     pipe_name = task.metadata.get("pipeline") if task else None
-    agents = load_agents(get_agents_yaml_path(root, pipe_name))
+    agents = load_agents(
+        get_agents_yaml_path(root, pipe_name),
+        cli_params=task.metadata.get("_pipeline_params") if task else None,
+    )
 
     from aqm.core.config import load_project_config
     from aqm.core.pipeline import Pipeline
 
-    pipeline = Pipeline(agents, queue, root, config=load_project_config(root))
+    project_config = load_project_config(root)
+    pipeline = Pipeline(
+        agents,
+        queue,
+        root,
+        config=project_config,
+        resident_agents=project_config.pipeline.get("resident_agents", True),
+    )
 
     try:
         result = pipeline.resume_task(task_id, "approved", reason)
@@ -1005,12 +1027,22 @@ def reject(task_id: str, reason: str) -> None:
     queue = _get_queue(root)
     task = queue.get(task_id)
     pipe_name = task.metadata.get("pipeline") if task else None
-    agents = load_agents(get_agents_yaml_path(root, pipe_name))
+    agents = load_agents(
+        get_agents_yaml_path(root, pipe_name),
+        cli_params=task.metadata.get("_pipeline_params") if task else None,
+    )
 
     from aqm.core.config import load_project_config
     from aqm.core.pipeline import Pipeline
 
-    pipeline = Pipeline(agents, queue, root, config=load_project_config(root))
+    project_config = load_project_config(root)
+    pipeline = Pipeline(
+        agents,
+        queue,
+        root,
+        config=project_config,
+        resident_agents=project_config.pipeline.get("resident_agents", True),
+    )
 
     try:
         result = pipeline.resume_task(task_id, "rejected", reason)
@@ -1041,12 +1073,22 @@ def human_input_cmd(task_id: str, response: str) -> None:
         return
 
     pipe_name = task.metadata.get("pipeline") if task else None
-    agents = load_agents(get_agents_yaml_path(root, pipe_name))
+    agents = load_agents(
+        get_agents_yaml_path(root, pipe_name),
+        cli_params=task.metadata.get("_pipeline_params") if task else None,
+    )
 
     from aqm.core.config import load_project_config
     from aqm.core.pipeline import Pipeline
 
-    pipeline = Pipeline(agents, queue, root, config=load_project_config(root))
+    project_config = load_project_config(root)
+    pipeline = Pipeline(
+        agents,
+        queue,
+        root,
+        config=project_config,
+        resident_agents=project_config.pipeline.get("resident_agents", True),
+    )
 
     console.print(f"[cyan]↩ Submitting response[/] for {task_id}...")
     try:
@@ -1400,7 +1442,17 @@ def serve(port: int, host: str) -> None:
 
         import uvicorn
 
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="info",
+            # On Windows prefer the selector loop: the Proactor loop can lose
+            # its accept coroutine when a client resets a connection, after
+            # which the process stays alive but refuses new requests
+            # ("Failed to fetch" in the UI).
+            loop="aqm.web.loops:selector_loop",
+        )
     except ImportError:
         console.print(
             "[yellow]Additional packages are required to run the web dashboard:[/]\n"
@@ -1418,7 +1470,8 @@ def serve(port: int, host: str) -> None:
 @click.option("--rounds", "-r", default=1, help="Number of discussion rounds")
 @click.option("--timeout", default=300, help="Timeout per agent in seconds")
 @click.option("--shared-file", "-f", default="meeting.md", help="Shared file path")
-def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: int, shared_file: str) -> None:
+@click.option("--cline-model", default="", help="Model ID configured for the selected Cline provider")
+def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: int, shared_file: str, cline_model: str) -> None:
     """Run a multi-agent collaborative meeting."""
     root = _get_project_root()
 
@@ -1426,6 +1479,7 @@ def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: i
         create_meeting, start_meeting, list_meetings,
         MeetingStatus, DEFAULT_AGENTS,
         load_meetings_on_startup, get_meeting as _get_meeting,
+        get_shared_file_path as _shared_file_path,
     )
     import time
 
@@ -1448,7 +1502,11 @@ def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: i
     for aid in agent_ids:
         matching = next((a for a in DEFAULT_AGENTS if a["id"] == aid), None)
         if matching:
-            agent_configs.append(matching)
+            agent_config = dict(matching)
+            if aid == "cline":
+                if cline_model:
+                    agent_config["model"] = cline_model
+            agent_configs.append(agent_config)
         else:
             agent_configs.append({"id": aid, "name": aid, "runtime": aid, "role": "", "system_prompt": ""})
 
@@ -1509,7 +1567,7 @@ def meeting(topic: str, description: str, agents: tuple, rounds: int, timeout: i
         console.print(f"\n[bold]Meeting finished:[/] {m.status}")
         if m.error:
             console.print(f"[red]Error:[/] {m.error}")
-        shared_path = root / m.shared_file
+        shared_path = _shared_file_path(m, root)
         if shared_path.exists():
             console.print(f"[green]Shared file:[/] {shared_path}")
 
@@ -1561,7 +1619,11 @@ def fix(task_id: str, input_text: str, agent: str | None, params: tuple[str, ...
 
     try:
         pipe_name = parent_task.metadata.get("pipeline") if parent_task else None
-        agents = load_agents(get_agents_yaml_path(root, pipe_name), cli_params=cli_params or None)
+        effective_params = {
+            **(parent_task.metadata.get("_pipeline_params", {}) or {}),
+            **cli_params,
+        }
+        agents = load_agents(get_agents_yaml_path(root, pipe_name), cli_params=effective_params or None)
     except (ValueError, FileNotFoundError) as e:
         console.print(f"[red]Error:[/] {e}")
         sys.exit(1)
@@ -1571,7 +1633,14 @@ def fix(task_id: str, input_text: str, agent: str | None, params: tuple[str, ...
     from aqm.core.config import load_project_config
     from aqm.core.pipeline import Pipeline
 
-    pipeline = Pipeline(agents, queue, root, config=load_project_config(root))
+    project_config = load_project_config(root)
+    pipeline = Pipeline(
+        agents,
+        queue,
+        root,
+        config=project_config,
+        resident_agents=project_config.pipeline.get("resident_agents", True),
+    )
 
     # Build the follow-up input with parent context
     followup_input = (
@@ -1584,7 +1653,12 @@ def fix(task_id: str, input_text: str, agent: str | None, params: tuple[str, ...
     task = Task(
         description=f"[fix] {input_text}",
         parent_task_id=task_id,
-        metadata={"kind": "fix", "parent_task_id": task_id},
+        metadata={
+            "kind": "fix",
+            "parent_task_id": task_id,
+            "pipeline": pipe_name or project_config.default_pipeline or "default",
+            "_pipeline_params": effective_params,
+        },
     )
     queue.push(task, start_agent)
 
@@ -1683,7 +1757,11 @@ def restart(task_id: str, from_stage: int | None, pipeline_name: str | None, par
 
     pipe_name = pipeline_name or task.metadata.get("pipeline")
     try:
-        agents = load_agents(get_agents_yaml_path(root, pipe_name), cli_params=cli_params or None)
+        effective_params = {
+            **(task.metadata.get("_pipeline_params", {}) or {}),
+            **cli_params,
+        }
+        agents = load_agents(get_agents_yaml_path(root, pipe_name), cli_params=effective_params or None)
     except (ValueError, FileNotFoundError) as e:
         console.print(f"[red]Error:[/] {e}")
         sys.exit(1)
@@ -1691,7 +1769,14 @@ def restart(task_id: str, from_stage: int | None, pipeline_name: str | None, par
     from aqm.core.config import load_project_config
     from aqm.core.pipeline import Pipeline
 
-    pipeline = Pipeline(agents, queue, root, config=load_project_config(root))
+    project_config = load_project_config(root)
+    pipeline = Pipeline(
+        agents,
+        queue,
+        root,
+        config=project_config,
+        resident_agents=project_config.pipeline.get("resident_agents", True),
+    )
 
     stage_label = f" from stage {from_stage}" if from_stage else ""
     console.print(
@@ -2411,7 +2496,8 @@ def chunks_group() -> None:
 
 @chunks_group.command(name="list")
 @click.argument("task_id")
-def chunks_list_cmd(task_id: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def chunks_list_cmd(task_id: str, as_json: bool) -> None:
     """List chunks for a task.  Example: aqm chunks list T-ABC123"""
     root = _get_project_root()
     from aqm.core.chunks import ChunkManager
@@ -2426,6 +2512,13 @@ def chunks_list_cmd(task_id: str) -> None:
     mgr = ChunkManager(task_dir)
     cl = mgr.load()
 
+    if as_json:
+        import json
+
+        console.print(json.dumps([c.model_dump(mode="json") for c in cl.chunks],
+                                 ensure_ascii=False, indent=2))
+        return
+
     if not cl.chunks:
         console.print(f"[dim]No chunks for {task_id}[/]")
         return
@@ -2433,27 +2526,42 @@ def chunks_list_cmd(task_id: str) -> None:
     table = Table(title=f"Chunks — {task_id}")
     table.add_column("ID", style="bold")
     table.add_column("Status")
+    table.add_column("Owner")
+    table.add_column("Phase")
     table.add_column("Description")
     table.add_column("Created By", style="dim")
 
-    status_style = {"pending": "yellow", "in_progress": "cyan", "done": "green"}
+    status_style = {
+        "pending": "yellow",
+        "in_progress": "cyan",
+        "done": "green",
+        "blocked": "red",
+    }
     for c in cl.chunks:
         table.add_row(
             c.id,
             f"[{status_style.get(c.status.value, 'white')}]{c.status.value}[/]",
+            c.owner or "-",
+            c.phase or "-",
             c.description,
             c.created_by,
         )
 
     console.print(table)
-    total, done, pending = mgr.counts()
-    console.print(f"\n  [bold]{done}/{total}[/] done, {pending} remaining")
+    progress = mgr.progress()
+    console.print(
+        f"\n  [bold]{progress['done']}/{progress['total']}[/] done, "
+        f"{progress['remaining']} remaining "
+        f"({progress['percent']}%)"
+    )
 
 
 @chunks_group.command(name="add")
 @click.argument("task_id")
 @click.argument("description")
-def chunks_add_cmd(task_id: str, description: str) -> None:
+@click.option("--owner", default="", help="Owning agent id")
+@click.option("--phase", default="", help="Phase label")
+def chunks_add_cmd(task_id: str, description: str, owner: str, phase: str) -> None:
     """Add a chunk.  Example: aqm chunks add T-ABC123 "Implement login" """
     root = _get_project_root()
     from aqm.core.chunks import ChunkManager
@@ -2464,7 +2572,7 @@ def chunks_add_cmd(task_id: str, description: str) -> None:
     task_dir.mkdir(parents=True, exist_ok=True)
 
     mgr = ChunkManager(task_dir)
-    chunk = mgr.add(description, created_by="user")
+    chunk = mgr.add(description, created_by="user", owner=owner, phase=phase)
     console.print(f"[green]✓[/] Added [bold]{chunk.id}[/]: {description}")
 
 
@@ -2506,6 +2614,147 @@ def chunks_remove_cmd(task_id: str, chunk_id: str) -> None:
     else:
         console.print(f"[red]Error:[/] Chunk {chunk_id} not found")
         sys.exit(1)
+
+
+@chunks_group.command(name="start")
+@click.argument("task_id")
+@click.argument("chunk_id")
+@click.option("--owner", default="", help="Assign the chunk to this agent")
+def chunks_start_cmd(task_id: str, chunk_id: str, owner: str) -> None:
+    """Mark a chunk as in progress."""
+    root = _get_project_root()
+    from aqm.core.chunks import ChunkManager
+    from aqm.core.project import get_tasks_dir
+
+    mgr = ChunkManager(get_tasks_dir(root) / task_id)
+    if not mgr.start(chunk_id, owner=owner):
+        console.print(f"[red]Error:[/] Chunk {chunk_id} not found")
+        sys.exit(1)
+    console.print(f"[cyan]→[/] {chunk_id} in progress")
+
+
+@chunks_group.command(name="block")
+@click.argument("task_id")
+@click.argument("chunk_id")
+@click.argument("reason", required=False, default="")
+def chunks_block_cmd(task_id: str, chunk_id: str, reason: str) -> None:
+    """Mark a chunk as blocked with an optional reason."""
+    root = _get_project_root()
+    from aqm.core.chunks import ChunkManager
+    from aqm.core.project import get_tasks_dir
+
+    mgr = ChunkManager(get_tasks_dir(root) / task_id)
+    if not mgr.block(chunk_id, reason):
+        console.print(f"[red]Error:[/] Chunk {chunk_id} not found")
+        sys.exit(1)
+    console.print(f"[yellow]⛔[/] {chunk_id} blocked{': ' + reason if reason else ''}")
+
+
+@chunks_group.command(name="reset")
+@click.argument("task_id")
+@click.option("--keep-done", is_flag=True, help="Keep completed chunks as done")
+def chunks_reset_cmd(task_id: str, keep_done: bool) -> None:
+    """Reset chunks to pending."""
+    root = _get_project_root()
+    from aqm.core.chunks import ChunkManager
+    from aqm.core.project import get_tasks_dir
+
+    mgr = ChunkManager(get_tasks_dir(root) / task_id)
+    changed = mgr.reset(keep_done=keep_done)
+    console.print(f"[green]✓[/] {changed} chunk(s) reset")
+
+
+@chunks_group.command(name="clear")
+@click.argument("task_id")
+@click.option("--keep-done", is_flag=True, help="Keep completed chunks")
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
+def chunks_clear_cmd(task_id: str, keep_done: bool, yes: bool) -> None:
+    """Remove all chunks from a task."""
+    root = _get_project_root()
+    from aqm.core.chunks import ChunkManager
+    from aqm.core.project import get_tasks_dir
+
+    if not yes and not click.confirm(f"Clear chunks for {task_id}?"):
+        return
+    mgr = ChunkManager(get_tasks_dir(root) / task_id)
+    removed = mgr.clear(keep_done=keep_done)
+    console.print(f"[green]✓[/] {removed} chunk(s) removed")
+
+
+@chunks_group.command(name="split")
+@click.argument("task_id")
+@click.option("--replace/--append", default=True,
+              help="Replace pending auto chunks (default) or append")
+@click.option("--keep-done/--reset", default=True,
+              help="Keep completed chunks when replacing")
+def chunks_split_cmd(task_id: str, replace: bool, keep_done: bool) -> None:
+    """Split the task's requirements document into work blocks."""
+    root = _get_project_root()
+    from aqm.core.config import load_project_config
+    from aqm.core.pipeline import Pipeline
+
+    queue = _get_queue(root)
+    try:
+        task = queue.get(task_id)
+        if task is None:
+            console.print(f"[red]Error:[/] Task {task_id} not found")
+            sys.exit(1)
+        pipeline_name = (task.metadata or {}).get("pipeline")
+        agents_path = get_agents_yaml_path(root, pipeline_name)
+        agents = load_agents(agents_path) if agents_path.exists() else {}
+        pipe = Pipeline(
+            agents,
+            queue,
+            root,
+            config=load_project_config(root),
+            resident_agents=False,
+        )
+        created = pipe.split_task_chunks(
+            task, replace=replace, keep_done=keep_done, force=True,
+        )
+        queue.update(task)
+    finally:
+        queue.close()
+    if not created:
+        console.print("[yellow]模型没有返回可用的工作块[/]")
+        sys.exit(1)
+    console.print(f"[green]✓[/] Created {len(created)} work block(s)")
+    for chunk in created:
+        console.print(f"  {chunk.id}  {chunk.owner or '-':<12} {chunk.description}")
+
+
+@chunks_group.command(name="import")
+@click.argument("task_id")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--owner", default="", help="Assign every imported chunk to this agent")
+@click.option("--phase", default="", help="Phase label for every imported chunk")
+def chunks_import_cmd(task_id: str, path: str, owner: str, phase: str) -> None:
+    """Import work blocks from a Markdown/text file (one per line)."""
+    root = _get_project_root()
+    from aqm.core.chunks import ChunkManager
+    from aqm.core.project import get_tasks_dir
+
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    import re as _re
+
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("|"):
+            continue
+        line = line.lstrip("-*+").strip()
+        line = _re.sub(r"^\d+[.)、]\s*", "", line)
+        if line:
+            lines.append(line)
+    if not lines:
+        console.print("[red]Error:[/] no usable lines found")
+        sys.exit(1)
+    mgr = ChunkManager(get_tasks_dir(root) / task_id)
+    created = [
+        mgr.add(line, created_by="user", owner=owner, phase=phase, source="manual")
+        for line in lines
+    ]
+    console.print(f"[green]✓[/] Imported {len(created)} work block(s)")
 
 
 if __name__ == "__main__":

@@ -35,6 +35,11 @@ class AbstractQueue(ABC):
         ...
 
     @abstractmethod
+    def delete(self, task_id: str) -> bool:
+        """Remove a task from the queue. Returns True when a row was deleted."""
+        ...
+
+    @abstractmethod
     def list_tasks(
         self,
         status: Optional[TaskStatus] = None,

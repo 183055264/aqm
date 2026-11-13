@@ -51,22 +51,26 @@ class LLMGate(AbstractGate):
         self.config = config
         self._defaults = gate_defaults  # ProjectConfig.gate (GateDefaults)
 
+    def _default(self, key: str, fallback):
+        """Read a project-level gate default from a dict or object."""
+        defaults = self._defaults
+        if not defaults:
+            return fallback
+        if isinstance(defaults, dict):
+            value = defaults.get(key)
+            return fallback if value in (None, "") else value
+        return getattr(defaults, key, fallback)
+
     def _get_system_prompt(self) -> str:
-        if self._defaults:
-            return self._defaults.system_prompt
-        return self._DEFAULT_SYSTEM_PROMPT
+        return self._default("system_prompt", self._DEFAULT_SYSTEM_PROMPT)
 
     def _get_model(self) -> str:
         if self.config.model:
             return self.config.model
-        if self._defaults:
-            return self._defaults.model
-        return "claude-sonnet-4-20250514"
+        return self._default("model", "claude-sonnet-4-20250514")
 
     def _get_timeout(self) -> int:
-        if self._defaults:
-            return self._defaults.timeout
-        return 120
+        return int(self._default("timeout", 120))
 
     def evaluate(self, task: Task, agent_output: str) -> GateResult:
         extra_prompt = ""

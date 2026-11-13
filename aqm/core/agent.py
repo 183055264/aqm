@@ -104,16 +104,21 @@ class ConsensusConfig(BaseModel):
 
 
 class ChunksConfig(BaseModel):
-    """Chunk decomposition settings for session nodes.
+    """Chunk decomposition settings for any agent or session node.
 
-    When enabled, the session tracks work units (chunks) that agents
-    can add, complete, or remove via output directives.  If
-    ``consensus.require_chunks_done`` is also set, consensus is only
-    reached when all chunks are marked done.
+    When enabled, the stage tracks work units (chunks) that agents can add,
+    complete or block via output directives.  ``enforce`` controls what happens
+    when the member still has unfinished chunks at the end of its turn.
     """
 
     enabled: bool = True
-    initial: list[str] = Field(default_factory=list)
+    initial: list[Any] = Field(default_factory=list)
+    auto_split: Optional[bool] = None
+    auto_instructions: Optional[bool] = None
+    enforce: Optional[Literal["off", "warn", "retry", "fail"]] = None
+    retry_limit: Optional[int] = None
+    owner_filter: Optional[bool] = None
+    auto_claim: Optional[bool] = None
 
 
 class RetryConfig(BaseModel):
@@ -576,14 +581,7 @@ def load_agents(
                     f"but no 'chunks' config defined."
                 )
 
-        # Warn about session-only fields on regular agents
-        if agent.type == "agent" and agent.chunks is not None:
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
-                "Agent '%s' has 'chunks' config but is not a session node "
-                "(chunks only apply to type: session).",
-                agent.id,
-            )
+        # Chunks are supported on both regular agents and session nodes.
 
         for handoff in agent.handoffs:
             if handoff.condition == "auto":

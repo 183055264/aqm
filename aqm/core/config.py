@@ -22,11 +22,37 @@ GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / "config.json"
 
 
 @dataclass
+class RuntimeTimeouts:
+    """Per-runtime execution timeouts, in seconds."""
+    claude: int = 600
+    gemini: int = 600
+    codex: int = 600
+    opencode: int = 600
+    kilo: int = 600
+    cline: int = 600
+
+
+@dataclass
 class ProjectConfig:
     """Project-level configuration stored in .aqm/config.yaml."""
     default_pipeline: str | None = None
     pipeline: dict = field(default_factory=lambda: {"max_stages": 20})
     gate: dict = field(default_factory=dict)
+    timeouts: RuntimeTimeouts = field(default_factory=RuntimeTimeouts)
+    # Work-block (chunk) decomposition settings, see aqm.core.chunks.
+    chunks: dict = field(default_factory=dict)
+    # Web-server behaviour.  ``auto_resume`` (default true) restarts tasks that
+    # were running when the server stopped.
+    server: dict = field(default_factory=lambda: {"auto_resume": True})
+    # Preferred reply language for every agent in this project (e.g.
+    # "简体中文").  Appended to each stage prompt as a hard directive so CLI
+    # models do not fall back to English narration.
+    language: str | None = None
+    # Filenames for final deliverables (reports, docs).  "auto" follows
+    # ``language`` (Chinese language => Chinese filenames), "chinese" and
+    # "english" force a naming convention.  Temporary files are never
+    # constrained.
+    deliverable_naming: str = "auto"
 
 
 def _ensure_config_dir() -> None:
@@ -119,6 +145,11 @@ def load_project_config(root: Path) -> ProjectConfig:
             default_pipeline=data.get("default_pipeline"),
             pipeline=data.get("pipeline", {"max_stages": 20}),
             gate=data.get("gate", {}),
+            timeouts=RuntimeTimeouts(**(data.get("timeouts") or {})),
+            language=data.get("language"),
+            deliverable_naming=data.get("deliverable_naming") or "auto",
+            chunks=data.get("chunks") or {},
+            server=data.get("server") or {"auto_resume": True},
         )
     except (yaml.YAMLError, OSError) as e:
         logger.warning("Failed to load project config: %s", e)
@@ -132,7 +163,16 @@ def save_project_config(root: Path, config: ProjectConfig) -> None:
         "default_pipeline": config.default_pipeline,
         "pipeline": config.pipeline,
         "gate": config.gate,
+        "timeouts": asdict(config.timeouts),
     }
+    if config.server:
+        data["server"] = config.server
+    if config.language:
+        data["language"] = config.language
+    if config.deliverable_naming and config.deliverable_naming != "auto":
+        data["deliverable_naming"] = config.deliverable_naming
+    if config.chunks:
+        data["chunks"] = config.chunks
     config_file.write_text(
         yaml.dump(data, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",

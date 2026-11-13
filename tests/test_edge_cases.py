@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from aqm.core.agent import AgentDefinition, load_agents
+from aqm.core.agent import AgentDefinition, GateConfig, load_agents
 from aqm.core.chunks import ChunkManager, _generate_chunk_id
 from aqm.core.context import build_prompt, render_template
 from aqm.core.context_file import ContextFile
@@ -168,9 +168,11 @@ class TestChunkEdgeCases:
         cm.add("first")
         cm.add("second")
         cm.remove("C-001")
-        # C-001 is now free, new chunk should reuse it
+        # IDs are max+1, never gap-filled: a removed ID may still be referenced
+        # by an old transcript or a completed-chunk note.
         chunk = cm.add("third")
-        assert chunk.id == "C-001"
+        assert chunk.id == "C-003"
+        assert [c.id for c in cm.load().chunks] == ["C-002", "C-003"]
 
     def test_init_from_config_idempotent(self, tmp_path):
         cm = ChunkManager(tmp_path / "task")
@@ -347,3 +349,17 @@ class TestGateEdgeCases:
         result = self._gate()._parse_response('{"score": 95, "feedback": "great"}')
         # Valid JSON but no "decision" field → keyword fallback → no keywords → reject
         assert result.decision == "rejected"
+
+    def test_project_gate_defaults_accept_plain_dict(self):
+        """``.aqm/config.yaml`` stores ``gate`` as a plain mapping."""
+        gate = LLMGate(
+            GateConfig(),
+            gate_defaults={
+                "model": "claude-test",
+                "system_prompt": "judge this",
+                "timeout": 7,
+            },
+        )
+        assert gate._get_model() == "claude-test"
+        assert gate._get_system_prompt() == "judge this"
+        assert gate._get_timeout() == 7

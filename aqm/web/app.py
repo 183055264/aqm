@@ -6,8 +6,11 @@ This module just wires everything together.
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -25,10 +28,44 @@ from aqm.core.project import (
 )
 from aqm.queue.sqlite import SQLiteQueue
 from aqm.meeting import list_meetings
+from aqm.web.task_projects import find_task, list_project_tasks
+
+# Restart coordination: only one restart script may run at a time, otherwise
+# overlapping scripts kill each other's freshly started server and the port is
+# left dead (the UI then reports "Failed to fetch").
+_restart_lock = threading.Lock()
+_restart_busy = False
+
+
+class _ProbeAccessFilter(logging.Filter):
+    """Hide access-log noise from other local services probing this port.
+
+    The opencode CLI service scans every listening port and asks ``/v1/models``
+    whether it happens to be an OpenAI-compatible server.  A 404 is the correct
+    answer — we must *not* pretend to be a model server — but logging the same
+    404 every few seconds is just noise.
+    """
+
+    _PATHS = frozenset({"/v1/models"})
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3:
+            path = args[2]
+            if isinstance(path, str) and path.split("?", 1)[0] in self._PATHS:
+                return False
+        return True
+
+
+def _install_probe_access_filter() -> None:
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _ProbeAccessFilter) for f in access.filters):
+        access.addFilter(_ProbeAccessFilter())
 
 
 def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) -> FastAPI:
     """Create and return the FastAPI application for the aqm dashboard."""
+    _install_probe_access_filter()
     app = FastAPI(title="aqm 控制台", docs_url="/docs")
 
     project_root = Path(project_root).resolve()
@@ -52,13 +89,35 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
         except (ValueError, FileNotFoundError) as exc:
             return {}, str(exc)
 
+    # ── Health probe ──────────────────────────────────────────────────
+
+    _health_seen: set[str] = set()
+
+    @app.get("/health")
+    async def health(request: Request):
+        """Liveness probe for local monitors / browser extensions.
+
+        The opencode CLI service probes ``/health`` on every port it finds in
+        its config, so answering here keeps the console log free of 404s.
+        """
+        log = logging.getLogger("aqm.web")
+        user_agent = (request.headers.get("user-agent") or "").strip() or "unknown"
+        if user_agent not in _health_seen:
+            _health_seen.add(user_agent)
+            log.warning(
+                "Health probe from %s: %s",
+                request.client.host if request.client else "?",
+                user_agent,
+            )
+        return {"status": "ok", "service": "aqm"}
+
     # ── Startup: recover stale tasks ──────────────────────────────────
 
     @app.on_event("startup")
     async def _recover_stale():
-        import logging
         log = logging.getLogger("aqm.web")
         queue = _get_queue()
+        stalled = []
         try:
             stalled = queue.recover_stale_tasks()
             if stalled:
@@ -69,6 +128,59 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
                 )
         finally:
             queue.close()
+        # Members die with the process, so any block left "in progress" is
+        # stale.  Release them before deciding what to resume, otherwise the
+        # work-block panel shows several blocks running at once.
+        try:
+            from aqm.web.api.tasks import cleanup_stale_chunks
+
+            cleaned = cleanup_stale_chunks(project_root)
+            if cleaned:
+                log.warning("Released %d stale in-progress work block(s)", cleaned)
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("Work-block cleanup failed: %s", exc)
+        if not stalled:
+            return
+        # A paused task blocks at the next boundary in memory; restore that
+        # state after a server restart so it does not silently start running.
+        from aqm.core.pipeline import pause_task
+
+        for task in stalled:
+            if (task.metadata or {}).get("paused"):
+                pause_task(task.id)
+                log.warning("Task %s stays paused after restart", task.id)
+        # Resume tasks that were running when the server stopped, so a
+        # deployment does not silently leave work half-finished.
+        if os.environ.get("AQM_DISABLE_AUTO_RESUME") == "1":
+            log.warning("Auto-resume disabled by AQM_DISABLE_AUTO_RESUME")
+            return
+        try:
+            from aqm.core.config import load_project_config
+
+            server_cfg = load_project_config(project_root).server or {}
+        except Exception:  # pragma: no cover - defensive
+            server_cfg = {}
+        if server_cfg.get("auto_resume", True) is False:
+            log.warning("Auto-resume disabled by project config (server.auto_resume)")
+            return
+        from aqm.web.api.tasks import auto_resume_stalled
+
+        auto_resume_stalled(project_root, [t.id for t in stalled])
+
+    # ── Favicon ───────────────────────────────────────────────────────
+
+    from fastapi.responses import Response
+
+    _favicon_path = Path(__file__).parent / "static" / "favicon.svg"
+
+    @app.get("/favicon.svg", response_class=Response, include_in_schema=False)
+    async def favicon():
+        if _favicon_path.exists():
+            return Response(
+                content=_favicon_path.read_bytes(),
+                media_type="image/svg+xml",
+            )
+        return Response(status_code=404)
 
     # ── HTML Pages ────────────────────────────────────────────────────
 
@@ -86,19 +198,16 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
     @app.get("/tasks", response_class=HTMLResponse)
     async def tasks_page(pipeline: str | None = None):
         from aqm.web.pages.tasks import render_tasks
-        queue = _get_queue()
-        try:
-            tasks = queue.list_tasks()
-            pipelines = list_pipelines(project_root)
-            current = pipeline or get_default_pipeline(project_root) or "default"
-            agents, agent_error = _get_agents(current)
-            return render_tasks(
-                tasks, agents,
-                pipelines=pipelines, current_pipeline=current,
-                agent_error=agent_error,
-            )
-        finally:
-            queue.close()
+        tasks = list_project_tasks(project_root)
+        pipelines = list_pipelines(project_root)
+        current = pipeline or get_default_pipeline(project_root) or "default"
+        agents, agent_error = _get_agents(current)
+        return render_tasks(
+            tasks, agents,
+            pipelines=pipelines, current_pipeline=current,
+            agent_error=agent_error,
+            current_project_dir=str(project_root),
+        )
 
     @app.get("/agents", response_class=HTMLResponse)
     async def agents_page(pipeline: str | None = None):
@@ -145,18 +254,29 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
     @app.get("/tasks/{task_id}", response_class=HTMLResponse)
     async def task_detail(task_id: str):
         from aqm.web.pages.task_detail import render_task_detail
-        queue = _get_queue()
+        found = find_task(project_root, task_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail="任务未找到")
+        task, task_root = found
+        pipeline_name = task.metadata.get("pipeline")
         try:
-            task = queue.get(task_id)
-            if task is None:
-                raise HTTPException(status_code=404, detail="任务未找到")
-            agents, _ = _get_agents()
-            tasks_dir = get_tasks_dir(project_root)
-            ctx_file = ContextFile(tasks_dir / task_id)
-            context_md = ctx_file.read()
-            return render_task_detail(task, agents, context_md)
-        finally:
-            queue.close()
+            agents_path = get_agents_yaml_path(task_root, pipeline_name)
+            agents = load_agents(
+                agents_path,
+                cli_params=task.metadata.get("_pipeline_params"),
+            ) if agents_path.exists() else {}
+        except (ValueError, FileNotFoundError):
+            agents = {}
+        tasks_dir = get_tasks_dir(task_root)
+        ctx_file = ContextFile(tasks_dir / task_id)
+        context_md = ctx_file.read()
+        return render_task_detail(
+            task,
+            agents,
+            context_md,
+            task_project_dir=str(task_root),
+            current_project_dir=str(project_root),
+        )
 
     @app.get("/registry", response_class=HTMLResponse)
     async def registry_page():
@@ -200,7 +320,11 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
 
     @app.get("/api/tasks/{task_id}/context")
     async def api_get_context(task_id: str):
-        tasks_dir = get_tasks_dir(project_root)
+        found = find_task(project_root, task_id)
+        if found is None:
+            raise HTTPException(404, "任务未找到")
+        _, task_root = found
+        tasks_dir = get_tasks_dir(task_root)
         ctx_file = ContextFile(tasks_dir / task_id)
         content = ctx_file.read()
         if not content:
@@ -228,6 +352,7 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
         return {
             "current": str(project_root),
             "recent": [str(p) for p in get_recent_projects()],
+            "pid": os.getpid(),
         }
 
     @app.post("/api/project/switch")
@@ -307,40 +432,86 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
             if os.path.exists(_restart_status_file):
                 with open(_restart_status_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                data["pid"] = os.getpid()
                 return data
             return {"status": "idle"}
         except Exception:
             return {"status": "unknown"}
     
     @app.post("/api/project/restart")
-    async def api_restart_server():
+    async def api_restart_server(request: Request):
         """Restart server with new project configuration.
         
         Writes detailed status to a file that the frontend can poll.
         """
+        import json
         import subprocess
         import sys
-        import threading
-        import time
         import platform
-        import shutil
-        
-        # Get the current project root from config
-        from aqm.core.config import get_default_project
-        new_project = get_default_project()
-        
-        if new_project is None:
-            return {"status": "error", "detail": "没有保存的项目配置", "suggestion": "请先切换项目"}
-        
+
+        # Target project: explicit body path when switching projects, otherwise
+        # the project this server is already serving. Using the globally
+        # configured default here used to restart into an unrelated project.
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        requested = str(body.get("path") or "").strip()
+        if requested:
+            new_project = Path(requested).expanduser().resolve()
+        else:
+            new_project = Path(project_root).expanduser().resolve()
+
+        if not new_project.is_dir():
+            return {
+                "status": "error",
+                "detail": f"项目目录不存在: {new_project}",
+                "suggestion": "请确认路径正确",
+            }
+
+        # Single-flight: overlapping restart requests used to spawn several
+        # batch scripts that killed whichever server owned the port last,
+        # leaving orphan processes and a dead port ("Failed to fetch").
+        global _restart_busy
+        with _restart_lock:
+            if _restart_busy:
+                return {
+                    "status": "restarting",
+                    "message": "服务器已在重启中...",
+                    "poll_url": "/api/project/restart-status",
+                }
+            try:
+                if os.path.exists(_restart_status_file):
+                    age = time.time() - os.path.getmtime(_restart_status_file)
+                    with open(_restart_status_file, "r", encoding="utf-8") as f:
+                        current = json.load(f)
+                    if (
+                        age < 30
+                        and current.get("status")
+                        in ("restarting", "creating_script", "starting_process")
+                    ):
+                        return {
+                            "status": "restarting",
+                            "message": current.get("detail") or "服务器正在重启，请稍候...",
+                            "poll_url": "/api/project/restart-status",
+                        }
+            except Exception:
+                pass
+            _restart_busy = True
+
         # Get current server config
         host = app.state.host
         port = app.state.port
+        old_pid = os.getpid()
         
         # Write "restarting" status immediately
         _write_restart_status("restarting", "正在准备重启...", "")
         
         def _restart_in_background():
             """Stop old server, then start new server."""
+            global _restart_busy
             try:
                 # Find aqm executable in the venv
                 venv_scripts = os.path.dirname(sys.executable)
@@ -363,23 +534,50 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
                         raise FileNotFoundError(f"Python 可执行文件未找到: {python_path}")
                     cmd = [python_path, "-m", "aqm.cli", "serve", "--project", str(new_project), "--port", str(port), "--host", host]
                     exe_path = python_path
+                cmd_line = subprocess.list2cmdline(cmd)
                 
                 # Write "creating script" status
                 _write_restart_status("creating_script", f"命令: {' '.join(cmd)}", "")
                 
                 if is_windows:
                     # Windows: create .bat script
-                    # Write error log to temp file
-                    log_file = os.path.join(tempfile.gettempdir(), "aqm_restart.log")
+                    # A per-run log avoids fighting with the previous server,
+                    # which keeps the old log handle open for its whole life
+                    # (a shared file made every restart after the first one
+                    # fail silently).
+                    log_file = os.path.join(
+                        tempfile.gettempdir(),
+                        f"aqm_restart_{int(time.time() * 1000)}.log",
+                    )
                     restart_script = f"""@echo off
 chcp 65001 >nul
 echo Restarting aqm server... > "{log_file}"
-echo Command: {" ".join(cmd)} >> "{log_file}"
+echo Command: {cmd_line} >> "{log_file}"
 echo Timestamp: %date% %time% >> "{log_file}"
-timeout /t 3 /nobreak >nul
+set OLD_PID={old_pid}
+rem Wait for the old server to release the port (it exits right after spawning us).
+for /l %%i in (1,1,30) do (
+    netstat -an | findstr /C:"127.0.0.1:{port} " | findstr LISTENING >nul
+    if errorlevel 1 goto port_free
+    timeout /t 1 /nobreak >nul
+)
+set OWNER=
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr /C:"127.0.0.1:{port} " ^| findstr LISTENING') do set OWNER=%%a
+if not defined OWNER goto port_free
+if not "%OWNER%"=="%OLD_PID%" (
+    echo Port is held by PID %OWNER%, not the previous server %OLD_PID%; aborting restart >> "{log_file}"
+    goto abort_restart
+)
+echo Killing unresponsive old server %OLD_PID% >> "{log_file}"
+taskkill /F /PID %OLD_PID% >nul 2>&1
+timeout /t 2 /nobreak >nul
+:port_free
 echo Starting new server on port {port}... >> "{log_file}"
-{" ".join(cmd)} >> "{log_file}" 2>&1
+{cmd_line} >> "{log_file}" 2>&1
 echo Server exited with code %errorlevel% >> "{log_file}"
+goto :eof
+:abort_restart
+echo Restart aborted; the previous server was left running >> "{log_file}"
 """
                     temp_dir = tempfile.gettempdir()
                     restart_script_path = os.path.join(temp_dir, "aqm_restart.bat")
@@ -387,28 +585,40 @@ echo Server exited with code %errorlevel% >> "{log_file}"
                         f.write(restart_script)
                     
                     # Write "starting process" status
-                    _write_restart_status("starting_process", f"脚本: {restart_script_path}", "")
+                    _write_restart_status("starting_process", f"脚本: {restart_script_path}，日志: {log_file}", "")
                     
                     # Check if script can be executed
                     if not os.path.exists(restart_script_path):
                         raise FileNotFoundError(f"重启脚本创建失败: {restart_script_path}")
                     
                     subprocess.Popen(
-                        [restart_script_path],
+                        restart_script_path,
                         creationflags=subprocess.CREATE_NEW_CONSOLE,
                         shell=True
                     )
                 else:
                     # Unix: create .sh script
-                    log_file = os.path.join(tempfile.gettempdir(), "aqm_restart.log")
+                    log_file = os.path.join(
+                        tempfile.gettempdir(),
+                        f"aqm_restart_{int(time.time() * 1000)}.log",
+                    )
                     restart_script = f"""#!/bin/bash
 echo "Restarting aqm server..." > "{log_file}"
-echo "Command: {' '.join(cmd)}" >> "{log_file}"
+echo "Command: {cmd_line}" >> "{log_file}"
 echo "Timestamp: $(date)" >> "{log_file}"
-sleep 3
+# Wait up to 30s for the old server to release the port.
+for i in $(seq 1 30); do
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -i :{port} -sTCP:LISTEN -t >/dev/null 2>&1 || break
+  else
+    sleep 2
+    break
+  fi
+  sleep 1
+done
 echo "Starting new server on port {port}..." >> "{log_file}"
-{' '.join(cmd)} >> "{log_file}" 2>&1
-echo "Server exited with code $?"/>>> "{log_file}"
+{cmd_line} >> "{log_file}" 2>&1
+echo "Server exited with code $?" >> "{log_file}"
 """
                     temp_dir = tempfile.gettempdir()
                     restart_script_path = os.path.join(temp_dir, "aqm_restart.sh")
@@ -422,27 +632,40 @@ echo "Server exited with code $?"/>>> "{log_file}"
                     
                     os.chmod(restart_script_path, 0o755)
                     subprocess.Popen(
-                        [restart_script_path],
+                        restart_script_path,
                         preexec_fn=os.setsid
                     )
                 
                 # Write "success" status before exiting
                 _write_restart_status("success", "服务器已停止，新服务器正在启动", "")
                 
+                # Save all running meetings before terminating the process
+                try:
+                    from aqm.meeting import _meetings, _meetings_lock, _save_meeting
+                    with _meetings_lock:
+                        running = [m for m in _meetings.values() if m.status == "running"]
+                    for m in running:
+                        try:
+                            _save_meeting(m, project_root)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                
                 # Stop old server (this process)
                 time.sleep(0.5)
                 os._exit(0)
             except FileNotFoundError as e:
                 _write_restart_status("failed", str(e), "确保 aqm 已正确安装，可执行文件存在于虚拟环境的 Scripts/bin 目录")
-                os._exit(0)
+                _restart_busy = False
             except PermissionError as e:
                 _write_restart_status("failed", str(e), "检查脚本权限或尝试以管理员身份运行")
-                os._exit(0)
+                _restart_busy = False
             except Exception as e:
                 import traceback
                 error_detail = str(e) + "\n" + traceback.format_exc()
-                _write_restart_status("failed", error_detail[:500], "查看日志文件: " + os.path.join(tempfile.gettempdir(), "aqm_restart.log"))
-                os._exit(0)
+                _write_restart_status("failed", error_detail[:500], "查看临时目录中的 aqm_restart_*.log")
+                _restart_busy = False
         
         # Start restart in background thread
         threading.Thread(target=_restart_in_background, daemon=True).start()

@@ -151,6 +151,11 @@ class SQLiteQueue(AbstractQueue):
             return None
         return Task.model_validate_json(row[0])
 
+    def delete(self, task_id: str) -> bool:
+        cursor = self._conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        self._conn.commit()
+        return cursor.rowcount > 0
+
     def list_tasks(
         self,
         status: Optional[TaskStatus] = None,

@@ -1,4 +1,4 @@
-"""Validate API endpoint — agents.yaml JSON Schema validation."""
+"""Validate API endpoint — JSON Schema validation for any project pipeline."""
 
 from __future__ import annotations
 
@@ -9,29 +9,80 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from aqm.core.project import get_agents_yaml_path
+from aqm.core.project import (
+    get_agents_yaml_path,
+    get_default_pipeline,
+    get_pipeline_path,
+    list_pipelines,
+)
 
 
 class ValidateRequest(BaseModel):
     yaml_content: Optional[str] = None
     strict: bool = False
+    pipeline: Optional[str] = None
+
+
+def _resolve_pipeline(project_root: Path, pipeline: Optional[str]) -> tuple[Path, str]:
+    """Resolve a pipeline name (or the current default) to its YAML path.
+
+    Resolved per request so that switching the default pipeline takes effect
+    immediately instead of being frozen at server startup.
+    """
+    if pipeline:
+        try:
+            return get_pipeline_path(project_root, pipeline), pipeline
+        except FileNotFoundError:
+            raise HTTPException(404, f"Pipeline '{pipeline}' not found")
+    name = get_default_pipeline(project_root) or "default"
+    return get_agents_yaml_path(project_root), name
 
 
 def create_validate_router(project_root: Path) -> APIRouter:
     router = APIRouter()
-    agents_yaml_path = get_agents_yaml_path(project_root)
+
+    @router.get("/api/validate/pipelines")
+    async def api_validate_pipelines():
+        default = get_default_pipeline(project_root) or "default"
+        items = []
+        for name in list_pipelines(project_root):
+            try:
+                path = get_pipeline_path(project_root, name)
+                items.append({
+                    "name": name,
+                    "is_default": name == default,
+                    "path": str(path),
+                    "exists": path.exists(),
+                })
+            except FileNotFoundError:
+                items.append({
+                    "name": name,
+                    "is_default": name == default,
+                    "path": "",
+                    "exists": False,
+                })
+        return {"pipelines": items, "default": default}
 
     @router.post("/api/validate")
     async def api_validate(req: ValidateRequest = None):
         import yaml as _yaml
 
-        # Use provided content or read from disk
+        # Use provided content or read the selected pipeline from disk
         if req and req.yaml_content:
             content = req.yaml_content
-        elif agents_yaml_path.exists():
-            content = agents_yaml_path.read_text(encoding="utf-8")
+            pipeline_name = (req.pipeline if req else None) or "(inline)"
+            path = None
         else:
-            raise HTTPException(400, "No agents.yaml found and no content provided")
+            path, pipeline_name = _resolve_pipeline(
+                project_root, req.pipeline if req else None
+            )
+            if not path.exists():
+                raise HTTPException(
+                    400,
+                    f"No YAML found for pipeline '{pipeline_name}' "
+                    f"(expected {path}); no content provided",
+                )
+            content = path.read_text(encoding="utf-8")
 
         # Read YAML
         try:
@@ -41,7 +92,9 @@ def create_validate_router(project_root: Path) -> APIRouter:
                 "valid": False,
                 "errors": [{"path": "(root)", "message": f"Failed to parse YAML: {e}", "fix": "Check YAML syntax."}],
                 "summary": {},
-                "yaml_content": content if "content" in dir() else "",
+                "pipeline": pipeline_name,
+                "source_path": str(path) if path else "",
+                "yaml_content": content,
             }
 
         if not isinstance(data, dict):
@@ -49,6 +102,8 @@ def create_validate_router(project_root: Path) -> APIRouter:
                 "valid": False,
                 "errors": [{"path": "(root)", "message": "agents.yaml must be a YAML mapping", "fix": "Ensure the file starts with a mapping structure."}],
                 "summary": {},
+                "pipeline": pipeline_name,
+                "source_path": str(path) if path else "",
                 "yaml_content": content,
             }
 
@@ -73,7 +128,7 @@ def create_validate_router(project_root: Path) -> APIRouter:
 
         errors = []
         for err in raw_errors:
-            path = " → ".join(str(p) for p in err.absolute_path) or "(root)"
+            path_str = " → ".join(str(p) for p in err.absolute_path) or "(root)"
             fix = ""
             if "is a required property" in err.message:
                 prop = err.message.split("'")[1]
@@ -82,7 +137,7 @@ def create_validate_router(project_root: Path) -> APIRouter:
                 fix = "Use one of the allowed values."
             elif "Additional properties are not allowed" in err.message:
                 fix = "Remove unrecognized fields."
-            errors.append({"path": path, "message": err.message, "fix": fix})
+            errors.append({"path": path_str, "message": err.message, "fix": fix})
 
         # Summary
         agents_list = data.get("agents", [])
@@ -120,6 +175,8 @@ def create_validate_router(project_root: Path) -> APIRouter:
                 "agent_count": len(agents_list),
                 "features": features,
             },
+            "pipeline": pipeline_name,
+            "source_path": str(path) if path else "",
             "yaml_content": content,
         }
 

@@ -107,6 +107,43 @@ class TestChunkManager:
         cl = mgr.load()
         assert cl.chunks[0].status == ChunkStatus.in_progress
 
+    def test_release_in_progress_returns_stale_blocks(self, tmp_path):
+        mgr = ChunkManager(tmp_path / "task-1")
+        mgr.add("A")
+        mgr.add("B")
+        mgr.add("C")
+        mgr.start("C-001")
+        mgr.start("C-002")
+        mgr.mark_done("C-003")
+
+        released = mgr.release_in_progress()
+
+        assert [c.id for c in released] == ["C-001", "C-002"]
+        cl = mgr.load()
+        statuses = {c.id: c.status for c in cl.chunks}
+        assert statuses["C-001"] == ChunkStatus.pending
+        assert statuses["C-002"] == ChunkStatus.pending
+        assert statuses["C-003"] == ChunkStatus.done
+
+    def test_release_in_progress_can_keep_selected_blocks(self, tmp_path):
+        mgr = ChunkManager(tmp_path / "task-1")
+        mgr.add("A")
+        mgr.add("B")
+        mgr.start("C-001")
+        mgr.start("C-002")
+
+        released = mgr.release_in_progress(keep=["C-002"])
+
+        assert [c.id for c in released] == ["C-001"]
+        statuses = {c.id: c.status for c in mgr.load().chunks}
+        assert statuses["C-001"] == ChunkStatus.pending
+        assert statuses["C-002"] == ChunkStatus.in_progress
+
+    def test_release_in_progress_noop_when_nothing_running(self, tmp_path):
+        mgr = ChunkManager(tmp_path / "task-1")
+        mgr.add("A")
+        assert mgr.release_in_progress() == []
+
     def test_all_done_empty(self, tmp_path):
         mgr = ChunkManager(tmp_path / "task-1")
         assert mgr.all_done() is True

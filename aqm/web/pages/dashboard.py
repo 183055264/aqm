@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-from aqm.core.task import Task, TaskStatus
+from aqm.core.task import Task
 from aqm.meeting import Meeting
-from aqm.web.templates import badge, esc, fmt_time, layout
+from aqm.web.templates import badge, display_status, esc, fmt_time, layout
 
 
 def render_dashboard(
     tasks: list[Task],
     meetings: list[Meeting] | None = None,
 ) -> str:
-    # Task stats
+    # Task stats (a paused task is reported as paused, not running)
     total = len(tasks)
-    completed = sum(1 for t in tasks if t.status == TaskStatus.completed)
-    failed = sum(1 for t in tasks if t.status == TaskStatus.failed)
-    awaiting = sum(1 for t in tasks if t.status == TaskStatus.awaiting_gate)
-    running = sum(1 for t in tasks if t.status == TaskStatus.in_progress)
+    displayed = [display_status(t) for t in tasks]
+    completed = sum(1 for s in displayed if s == "completed")
+    failed = sum(1 for s in displayed if s == "failed")
+    awaiting = sum(1 for s in displayed if s == "awaiting_gate")
+    running = sum(1 for s in displayed if s == "in_progress")
+    paused = sum(1 for s in displayed if s == "paused")
 
     # Meeting stats
     meetings = meetings or []
@@ -28,6 +30,7 @@ def render_dashboard(
 <div class="stats" id="statsCards">
   <div class="stat-card"><div class="value" id="statTotal">{total}</div><div class="label">任务总数</div></div>
   <div class="stat-card blue"><div class="value" id="statRunning">{running}</div><div class="label">运行中</div></div>
+  <div class="stat-card orange"><div class="value" id="statPaused">{paused}</div><div class="label">已暂停</div></div>
   <div class="stat-card green"><div class="value" id="statCompleted">{completed}</div><div class="label">已完成</div></div>
   <div class="stat-card red"><div class="value" id="statFailed">{failed}</div><div class="label">失败</div></div>
   <div class="stat-card orange"><div class="value" id="statAwaiting">{awaiting}</div><div class="label">等待审批</div></div>
@@ -60,7 +63,7 @@ def render_dashboard(
             rows.append(
                 f'<tr>'
                 f'<td><a href="/tasks/{esc(t.id)}">{esc(t.id)}</a></td>'
-                f'<td>{badge(t.status.value)}</td>'
+                f'<td>{badge(display_status(t))}</td>'
                 f'<td style="font-size:12px;color:var(--text-dim);">{p_name}</td>'
                 f'<td>{agent}</td>'
                 f'<td title="{esc(t.description)}" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">{desc}</td>'
@@ -150,6 +153,7 @@ try {
     const d = JSON.parse(e.data);
     if (d.total !== undefined) document.getElementById('statTotal')?.replaceChildren(d.total);
     if (d.running !== undefined) document.getElementById('statRunning')?.replaceChildren(d.running);
+    if (d.paused !== undefined) document.getElementById('statPaused')?.replaceChildren(d.paused);
     if (d.completed !== undefined) document.getElementById('statCompleted')?.replaceChildren(d.completed);
     if (d.failed !== undefined) document.getElementById('statFailed')?.replaceChildren(d.failed);
     if (d.awaiting !== undefined) document.getElementById('statAwaiting')?.replaceChildren(d.awaiting);

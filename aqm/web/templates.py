@@ -6,6 +6,8 @@ import html
 from datetime import datetime
 from typing import Optional
 
+from aqm import __version__
+
 
 # ---------------------------------------------------------------------------
 # CSS Design System
@@ -60,7 +62,7 @@ a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:under
 .breadcrumb a { color:var(--text-dim); } .breadcrumb a:hover { color:var(--text); text-decoration:none; }
 .breadcrumb .sep { color:var(--border); }
 .breadcrumb .current { color:var(--text); font-weight:600; }
-.container { width:100%; max-width:1200px; margin:0 auto; padding:24px; flex:1; }
+.container { width:100%; max-width:1400px; margin:0 auto; padding:24px; flex:1; }
 
 /* ── Old top-nav (hidden, replaced by sidebar) ── */
 body > nav { display:none; }
@@ -98,6 +100,7 @@ tr:hover td { background:rgba(88,166,255,.04); }
 .badge-cancelled { background:#30363d; color:#d29922; }
 .badge-awaiting_human_input { background:#0a2e2a; color:#39d2c0; }
 .badge-stalled { background:#462c08; color:#d29922; }
+.badge-paused { background:#462c08; color:#d29922; }
 .badge-started { background:#0d419d; color:#58a6ff; }
 
 /* ── Buttons ────────────────────────────────── */
@@ -125,6 +128,12 @@ tr:hover td { background:rgba(88,166,255,.04); }
 .timeline-item.running::before { background:var(--accent); animation:pulse 1.5s infinite; }
 .timeline-item.failed::before { background:var(--red); }
 @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(1.2)} }
+.timeline-note { margin-top:10px; padding:9px 12px; border-left:3px dashed var(--accent); background:rgba(88,166,255,.08); border-radius:0 6px 6px 0; }
+.timeline-note-head { display:flex; align-items:center; gap:8px; font-size:12px; }
+.tn-who { width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--accent); color:#fff; font-size:11px; }
+.tn-title { font-weight:600; color:var(--text); }
+.tn-time { margin-left:auto; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+.tn-text { margin-top:5px; white-space:pre-wrap; word-break:break-word; color:var(--text); font-size:13px; line-height:1.55; }
 
 /* ── Details & Pre ──────────────────────────── */
 details { margin-top:8px; } details summary { cursor:pointer; color:var(--text-dim); font-size:13px; } details summary:hover { color:var(--text); }
@@ -133,6 +142,30 @@ pre { background:var(--surface2); border:1px solid var(--border); border-radius:
 .pre-wrap .copy-btn { position:absolute; top:8px; right:8px; padding:4px 8px; font-size:11px; background:var(--surface); border:1px solid var(--border); border-radius:4px; color:var(--text-dim); cursor:pointer; opacity:0; transition:.15s; }
 .pre-wrap:hover .copy-btn { opacity:1; }
 .pre-wrap .copy-btn:hover { color:var(--text); border-color:var(--accent); }
+
+/* ── Markdown body ──────────────────────────── */
+.md-body { font-size:14px; line-height:1.7; color:var(--text); word-break:break-word; }
+.md-body > *:first-child { margin-top:0; }
+.md-body > *:last-child { margin-bottom:0; }
+.md-body h1,.md-body h2,.md-body h3,.md-body h4,.md-body h5,.md-body h6 { margin:18px 0 8px; line-height:1.35; color:var(--text); }
+.md-body h1 { font-size:20px; border-bottom:1px solid var(--border); padding-bottom:6px; }
+.md-body h2 { font-size:17px; border-bottom:1px solid var(--border); padding-bottom:5px; }
+.md-body h3 { font-size:15px; color:var(--accent); }
+.md-body h4,.md-body h5,.md-body h6 { font-size:14px; color:var(--text-dim); }
+.md-body p { margin:8px 0; }
+.md-body ul,.md-body ol { margin:8px 0; padding-left:22px; }
+.md-body li { margin:3px 0; }
+.md-body li > ul,.md-body li > ol { margin:3px 0; }
+.md-body code { background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:1px 5px; font-size:12.5px; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+.md-body pre.md-code { background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:10px 12px; overflow-x:auto; max-height:360px; white-space:pre; }
+.md-body pre.md-code code { background:none; border:0; padding:0; font-size:12.5px; }
+.md-body blockquote { margin:10px 0; padding:6px 12px; border-left:3px solid var(--accent); background:rgba(88,166,255,.07); color:var(--text-dim); border-radius:0 6px 6px 0; }
+.md-body hr { border:0; border-top:1px solid var(--border); margin:16px 0; }
+.md-body table { border-collapse:collapse; margin:10px 0; width:100%; font-size:13px; display:block; overflow-x:auto; }
+.md-body th,.md-body td { border:1px solid var(--border); padding:6px 10px; text-align:left; vertical-align:top; }
+.md-body th { background:var(--surface2); font-weight:600; }
+.md-body a { color:var(--accent); }
+.md-body strong { color:var(--text); }
 
 /* ── Meta ───────────────────────────────────── */
 .meta-row { display:flex; gap:24px; flex-wrap:wrap; margin-bottom:8px; }
@@ -175,7 +208,7 @@ pre { background:var(--surface2); border:1px solid var(--border); border-radius:
 
 /* ── Tabs (CSS-only + JS enhanced) ──────────── */
 .tabs { display:flex; gap:0; border-bottom:1px solid var(--border); margin-bottom:16px; overflow-x:auto; }
-.tabs input[type="radio"] { display:none; }
+.tabs input[type="radio"], input[name="tab"] { display:none; }
 .tabs label.tab { padding:10px 20px; font-size:14px; color:var(--text-dim); cursor:pointer; border-bottom:2px solid transparent; transition:.15s; white-space:nowrap; user-select:none; }
 .tabs label.tab:hover { color:var(--text); }
 .tab-panels .tab-panel { display:none; }
@@ -238,6 +271,17 @@ pre { background:var(--surface2); border:1px solid var(--border); border-radius:
 .modal-lg { max-width:900px; }
 .modal h3 { margin-bottom:16px; }
 
+/* ── Handoff multi-select ───────────────────── */
+.ho-multi { position:relative; flex:1; min-width:180px; }
+.ho-multi-btn { width:100%; text-align:left; padding:6px 8px; font-size:13px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ho-multi-btn:hover { border-color:var(--accent); }
+.ho-multi-menu { display:none; position:fixed; top:0; left:0; z-index:400; background:var(--surface); border:1px solid var(--border); border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,.35); max-height:240px; overflow-y:auto; padding:4px; }
+.ho-multi-menu.show { display:block; }
+.ho-multi-item { display:flex; align-items:center; gap:8px; padding:5px 8px; font-size:13px; border-radius:4px; cursor:pointer; }
+.ho-multi-item:hover { background:var(--surface2); }
+.ho-multi-item input { width:auto; margin:0; }
+.ho-multi-empty { padding:8px; font-size:12px; color:var(--text-dim); }
+
 /* ── Command Palette ────────────────────────── */
 .cmd-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:300; align-items:flex-start; justify-content:center; padding-top:20vh; }
 .cmd-overlay.show { display:flex; }
@@ -266,10 +310,37 @@ pre { background:var(--surface2); border:1px solid var(--border); border-radius:
 .yaml-editor { font-family:'SF Mono','Monaco','Menlo','Consolas',monospace; font-size:13px; line-height:1.6; min-height:70vh; width:100%; resize:vertical; tab-size:2; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:16px; }
 
 /* ── Chunk list ─────────────────────────────── */
-.chunk-item { display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--border); }
+.chunk-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:10px; flex-wrap:wrap; }
+.chunk-title { font-weight:600; font-size:15px; }
+.chunk-sub { font-size:12px; color:var(--text-dim); margin-top:4px; }
+.chunk-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.chunk-progress { height:6px; border-radius:3px; background:var(--surface2); overflow:hidden; margin-bottom:12px; }
+.chunk-progress-bar { height:100%; background:var(--green); transition:width .3s ease; }
+.chunk-add { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+.chunk-add input { padding:6px 10px; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); font-size:13px; }
+.chunk-split-state { padding:8px 10px; margin-bottom:10px; border-radius:4px; background:var(--surface2); border:1px solid var(--border); font-size:12px; color:var(--text-dim); }
+.chunk-split-state.chunk-split-error { border-color:var(--red); color:var(--red); }
+.chunk-group-head { display:flex; justify-content:space-between; padding:8px 0 4px; font-size:12px; color:var(--text-dim); border-bottom:1px dashed var(--border); margin-top:8px; }
+.chunk-group-count { font-variant-numeric:tabular-nums; }
+.chunk-item { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--border); }
 .chunk-item:last-child { border-bottom:none; }
-.chunk-item .chunk-desc { flex:1; font-size:14px; }
+.chunk-item .chunk-id { font-family:'SF Mono','Consolas',monospace; font-size:12px; color:var(--text-dim); width:52px; flex-shrink:0; }
+.chunk-item .chunk-desc { flex:1; font-size:14px; min-width:0; }
+.chunk-item .chunk-owner { font-size:12px; color:var(--text-dim); width:90px; text-align:right; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chunk-item .chunk-owner-select { width:132px; flex-shrink:0; padding:4px 6px; font-size:12px; }
 .chunk-item select { width:auto; padding:4px 8px; font-size:12px; }
+.chunk-status-done { color:var(--green); }
+.chunk-status-blocked { color:var(--red); }
+.chunk-note { font-size:12px; color:var(--text-dim); margin-top:2px; }
+.chunk-ops { display:flex; gap:2px; flex-shrink:0; }
+.chunk-op { border:none; background:transparent; color:var(--text-dim); cursor:pointer; font-size:13px; padding:2px 5px; border-radius:3px; }
+.chunk-op:hover { background:var(--surface2); color:var(--text); }
+.chunk-op-run:hover { color:var(--green); }
+.chunk-op-del:hover { color:var(--red); }
+.badge-done { background:#1a3d2b; color:#3fb950; }
+.badge-blocked { background:#4a1f1f; color:#f85149; }
+.chunk-mini { margin-top:4px; font-size:11px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+
 
 @media (max-width:768px) {
   .sidebar { position:fixed; top:0; bottom:0; left:0; transform:translateX(-100%); transition:transform .3s ease; }
@@ -334,13 +405,41 @@ function showToast(msg, type='success', action, duration=4000) {
 
 /* ── API Fetch ─────────────────────────────── */
 async function apiFetch(url, opts={}) {
-  try {
-    const res = await fetch(url, {headers:{'Content-Type':'application/json'}, ...opts});
-    if (res.headers.get('content-type')?.includes('text/plain')) return await res.text();
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || '请求失败');
-    return data;
-  } catch(e) { showToast(e.message, 'error'); throw e; }
+  const {quiet=false, ...fetchOpts} = opts;
+  const method = String(fetchOpts.method || 'GET').toUpperCase();
+  // A transient socket reset (common on Windows when the browser reuses or
+  // aborts a keep-alive connection) would otherwise surface as a scary
+  // "Failed to fetch" toast although the request is harmless. Retry
+  // idempotent GETs a couple of times before reporting anything.
+  const retries = method === 'GET' ? 2 : 0;
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {headers:{'Content-Type':'application/json'}, ...fetchOpts});
+      if (res.headers.get('content-type')?.includes('text/plain')) return await res.text();
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = data.detail;
+        const message = detail && typeof detail === 'object'
+          ? (detail.message || '请求失败')
+          : (detail || '请求失败');
+        const err = new Error(message);
+        err.isApiError = true;
+        err.status = res.status;
+        err.detail = detail;
+        throw err;
+      }
+      return data;
+    } catch(e) {
+      lastErr = e;
+      if (e && e.isApiError) break;
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+      }
+    }
+  }
+  if (!quiet) showToast(lastErr && lastErr.message ? lastErr.message : '请求失败', 'error');
+  throw lastErr;
 }
 
 /* ── Theme Toggle ──────────────────────────── */
@@ -413,10 +512,13 @@ function closeSidebarMobile() {
 /* ── Copy to clipboard ─────────────────────── */
 function copyText(btn) {
   const pre = btn.closest('.pre-wrap')?.querySelector('pre');
-  if (!pre) return;
-  navigator.clipboard.writeText(pre.textContent).then(() => {
+  const text = pre ? pre.textContent : (btn.getAttribute('data-copy') || '');
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const original = btn.getAttribute('data-original-label') || btn.textContent;
+    btn.setAttribute('data-original-label', original);
     btn.textContent = '已复制';
-    setTimeout(() => { btn.textContent = '复制'; }, 1500);
+    setTimeout(() => { btn.textContent = original; }, 1500);
   });
 }
 
@@ -470,16 +572,54 @@ function hideProjectSwitch() {
 // Restart status polling
 function pollRestartStatus(interval, maxAttempts) {
   let attempts = 0;
+  let previousPid = null;
+  let reloading = false;
+
+  async function reloadWhenNewServerReady(targetPath) {
+    // The "success" status is written by the *old* process just before it
+    // exits; the new one may still be binding the port. Wait until a different
+    // process answers so reloading never lands on a dead port.
+    for (let i = 0; i < 60; i++) {
+      try {
+        const res = await fetch('/api/project/restart-status', {cache: 'no-store'});
+        if (res.ok) {
+          const data = await res.json();
+          if (data.pid && previousPid && data.pid !== previousPid) {
+            location.href = targetPath || location.href;
+            return;
+          }
+        }
+      } catch (e) { /* new server not listening yet */ }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    showToast('服务器重启后仍无响应，请手动刷新页面', 'error', null, 10000);
+  }
+
   const timer = setInterval(async () => {
     attempts++;
     try {
       const res = await fetch('/api/project/restart-status');
       const data = await res.json();
-      
-      if (data.status === 'success') {
+      if (data.pid && previousPid === null) previousPid = data.pid;
+
+      if (data.status === 'success' && !reloading) {
         clearInterval(timer);
-        showToast('服务器重启成功，正在刷新页面...', 'success');
-        setTimeout(() => location.reload(), 1000);
+        reloading = true;
+        let targetPath = null;
+        const pending = sessionStorage.getItem('aqm_pending_task_restart');
+        if (pending) {
+          try {
+            const task = JSON.parse(pending);
+            showToast('服务器重启成功，正在恢复任务重启...', 'success');
+            targetPath = '/tasks/' + encodeURIComponent(task.taskId);
+          } catch(e) {
+            sessionStorage.removeItem('aqm_pending_task_restart');
+            showToast('服务器重启成功，正在刷新页面...', 'success');
+          }
+        } else {
+          showToast('服务器重启成功，正在刷新页面...', 'success');
+        }
+        reloadWhenNewServerReady(targetPath);
       } else if (data.status === 'failed') {
         clearInterval(timer);
         const detail = data.detail || '未知错误';
@@ -497,6 +637,90 @@ function pollRestartStatus(interval, maxAttempts) {
       }
     }
   }, interval);
+}
+
+async function restartTaskInProject(taskId, projectDir, fromStage, note) {
+  const projectResponse = await fetch('/api/project');
+  const project = await projectResponse.json();
+  if (projectDir && project.current !== projectDir) {
+    if (!confirm(
+      `任务属于项目 "${projectDir}"，当前项目为 "${project.current}"。\n` +
+      '是否切换项目并重启服务器？服务器恢复后将自动重启此任务，左栏目录也会更新。'
+    )) return;
+    sessionStorage.setItem('aqm_pending_task_restart', JSON.stringify({
+      taskId,
+      fromStage,
+      note: note || '',
+      projectDir,
+    }));
+    try {
+      const switchResponse = await fetch('/api/project/switch', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({path: projectDir}),
+      });
+      const switchData = await switchResponse.json();
+      if (!switchResponse.ok) throw new Error(switchData.detail || '项目切换失败');
+      const restartResponse = await fetch('/api/project/restart', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({path: projectDir}),
+      });
+      const restartData = await restartResponse.json().catch(() => ({}));
+      if (!restartResponse.ok) throw new Error(restartData.detail || '服务器重启失败');
+      showToast('正在切换项目并重启服务器...', 'info');
+      pollRestartStatus(2000, 30);
+    } catch(e) {
+      sessionStorage.removeItem('aqm_pending_task_restart');
+      showToast(e.message, 'error');
+    }
+    return;
+  }
+  const body = {};
+  if (fromStage) body.from_stage = fromStage;
+  if (note && note.trim()) body.note = note.trim();
+  await apiFetch('/api/tasks/' + encodeURIComponent(taskId) + '/restart', {
+    method:'POST',
+    body:JSON.stringify(body),
+  });
+  showToast('任务重启中...');
+  setTimeout(() => {
+    location.href = '/tasks/' + encodeURIComponent(taskId) + '#output';
+  }, 600);
+}
+
+async function resumePendingTaskRestart() {
+  const raw = sessionStorage.getItem('aqm_pending_task_restart');
+  if (!raw) return;
+  try {
+    const pending = JSON.parse(raw);
+    const projectResponse = await fetch('/api/project');
+    const project = await projectResponse.json();
+    if (project.current !== pending.projectDir) {
+      sessionStorage.removeItem('aqm_pending_task_restart');
+      showToast('当前项目与待重启任务所属目录不一致，已取消自动重启。', 'error');
+      return;
+    }
+    const taskPath = '/tasks/' + encodeURIComponent(pending.taskId);
+    if (location.pathname !== taskPath) {
+      location.href = taskPath;
+      return;
+    }
+    sessionStorage.removeItem('aqm_pending_task_restart');
+    const body = {};
+    if (pending.fromStage) body.from_stage = pending.fromStage;
+    if (pending.note) body.note = pending.note;
+    await apiFetch('/api/tasks/' + encodeURIComponent(pending.taskId) + '/restart', {
+      method:'POST',
+      body:JSON.stringify(body),
+    });
+    showToast('任务重启中...');
+    location.hash = 'output';
+    setTimeout(() => location.reload(), 800);
+  } catch(e) {
+    sessionStorage.removeItem('aqm_pending_task_restart');
+    showToast(e.message || '自动重启任务失败', 'error');
+  }
 }
 
 async function switchProject() {
@@ -521,7 +745,11 @@ async function switchProject() {
     hideProjectSwitch();
     showToast('已切换项目，正在重启服务器...', 'info');
     // Call restart API - server will start new instance and stop old one
-    const res2 = await fetch('/api/project/restart', {method:'POST'});
+    const res2 = await fetch('/api/project/restart', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({path: path})
+    });
     if (res2.ok) {
       showToast('服务器正在重启，请稍后...', 'info');
       // Poll for restart status
@@ -553,7 +781,11 @@ async function initAndSwitchProject(path) {
     hideProjectSwitch();
     showToast('项目已创建，正在重启服务器...', 'success');
     // Call restart API
-    const res3 = await fetch('/api/project/restart', {method:'POST'});
+    const res3 = await fetch('/api/project/restart', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({path: path})
+    });
     if (res3.ok) {
       showToast('服务器正在重启，请稍后...', 'info');
       pollRestartStatus(2000, 30);
@@ -593,6 +825,7 @@ async function restartServer() {
   }
 }
 loadProjectInfo();
+resumePendingTaskRestart();
 """
 
 
@@ -603,8 +836,8 @@ loadProjectInfo();
 def sidebar_html(active: str = "") -> str:
     links = [
         ("/", "概览", "dashboard", "dashboard"),
-        ("/tasks", "任务", "tasks", "tasks"),
         ("/meeting", "会议", "meeting", "meeting"),
+        ("/tasks", "任务", "tasks", "tasks"),
         ("/agents", "代理", "agents", "agents"),
         ("/pipelines", "流水线", "pipelines", "pipelines"),
         ("/registry", "注册表", "registry", "registry"),
@@ -633,7 +866,7 @@ def sidebar_html(active: str = "") -> str:
     <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
       <button class="btn btn-sm" style="padding:2px 8px;font-size:11px;flex:1;" onclick="restartServer()" title="重启服务">重启服务</button>
     </div>
-    <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">aqm v1.3.0</div>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">aqm v{__version__}</div>
   </div>
 </aside>"""
 
@@ -693,6 +926,7 @@ def layout(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>{title} - aqm</title>
   <style>{CSS}</style>
   {extra_head}
@@ -741,10 +975,28 @@ def esc(text: str) -> str:
     return html.escape(str(text)) if text else ""
 
 
-def fmt_time(dt: Optional[datetime]) -> str:
+def fmt_time(dt) -> str:
     if dt is None:
         return "-"
+    if isinstance(dt, str):
+        return dt[:19].replace("T", " ")
     return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def display_status(task) -> str:
+    """Return the status a user should see.
+
+    A paused task keeps ``in_progress`` in the database (the worker is still
+    alive, just blocked at a boundary), but showing "运行中" next to pause
+    controls, a paused badge and an idle member roster is contradictory.
+    """
+    status = getattr(task.status, "value", task.status)
+    paused = bool((getattr(task, "metadata", None) or {}).get("paused"))
+    if paused and status in (
+        "in_progress", "awaiting_gate", "awaiting_human_input",
+    ):
+        return "paused"
+    return status
 
 
 def badge(status: str) -> str:
@@ -752,6 +1004,7 @@ def badge(status: str) -> str:
     labels = {
         "pending": "待处理",
         "in_progress": "运行中",
+        "paused": "已暂停",
         "awaiting_gate": "等待审批",
         "approved": "已通过",
         "completed": "已完成",

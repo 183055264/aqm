@@ -91,6 +91,16 @@ class FileQueue(AbstractQueue):
                 )
         return None
 
+    def delete(self, task_id: str) -> bool:
+        removed = False
+        for q_dir in self.base_dir.iterdir():
+            if not q_dir.is_dir():
+                continue
+            for f in q_dir.glob(f"*_{task_id}.json"):
+                f.unlink()
+                removed = True
+        return removed
+
     def list_tasks(
         self,
         status: Optional[TaskStatus] = None,

@@ -66,8 +66,8 @@ class TestValidation:
         with pytest.raises(ValueError, match="summary_agent.*participant"):
             load_agents(yaml_path)
 
-    def test_chunks_on_non_session_warns(self, tmp_project, caplog):
-        """Chunks config on regular agent should log a warning."""
+    def test_chunks_on_non_session_supported(self, tmp_project, caplog):
+        """Work blocks are supported on regular agents too (no warning)."""
         import logging
 
         yaml_content = {
@@ -87,7 +87,9 @@ class TestValidation:
             agents = load_agents(yaml_path)
 
         assert "regular" in agents
-        assert "chunks only apply" in caplog.text.lower() or "not a session" in caplog.text.lower()
+        assert agents["regular"].chunks is not None
+        assert agents["regular"].chunks.initial == ["Task 1"]
+        assert "chunks only apply" not in caplog.text.lower()
 
 
 # ── P2: Chunk edge cases ─────────────────────────────────────────────
@@ -138,15 +140,15 @@ class TestChunkEdgeCases:
         assert len(actions) == 0
         assert len(mgr.load().chunks) == 0
 
-    def test_chunk_id_reuses_gaps(self, tmp_path):
-        """Removed chunk IDs get reused by next add."""
+    def test_chunk_id_does_not_reuse_gaps(self, tmp_path):
+        """Removed IDs are never reused, so old transcripts stay unambiguous."""
         mgr = ChunkManager(tmp_path / "task-1")
         mgr.add("First")   # C-001
         mgr.add("Second")  # C-002
         mgr.add("Third")   # C-003
         mgr.remove("C-002")
-        c4 = mgr.add("Fourth")  # Reuses C-002 (first available)
-        assert c4.id == "C-002"
+        c4 = mgr.add("Fourth")  # max suffix + 1
+        assert c4.id == "C-004"
 
 
 # ── P3: Session error recovery ────────────────────────────────────────
@@ -386,6 +388,42 @@ class TestContextFileEdgeCases:
 
 class TestTimeoutConfigPropagation:
     """Regression: config timeout must reach the runtime, not be hardcoded."""
+
+    def test_project_config_round_trips_pipeline_options_and_timeouts(self, tmp_project):
+        from aqm.core.config import (
+            ProjectConfig,
+            RuntimeTimeouts,
+            load_project_config,
+            save_project_config,
+        )
+
+        config = ProjectConfig(
+            pipeline={"max_stages": 8, "resident_agents": False},
+            timeouts=RuntimeTimeouts(claude=900),
+        )
+        save_project_config(tmp_project, config)
+
+        loaded = load_project_config(tmp_project)
+
+        assert loaded.pipeline == {"max_stages": 8, "resident_agents": False}
+        assert loaded.timeouts.claude == 900
+
+    def test_project_config_round_trips_deliverable_naming(self, tmp_project):
+        from aqm.core.config import (
+            ProjectConfig,
+            load_project_config,
+            save_project_config,
+        )
+
+        save_project_config(tmp_project, ProjectConfig(deliverable_naming="chinese"))
+        loaded = load_project_config(tmp_project)
+        assert loaded.deliverable_naming == "chinese"
+
+        # "auto" is the default and is omitted from the file entirely.
+        save_project_config(tmp_project, ProjectConfig())
+        raw = (tmp_project / ".aqm" / "config.yaml").read_text(encoding="utf-8")
+        assert "deliverable_naming" not in raw
+        assert load_project_config(tmp_project).deliverable_naming == "auto"
 
     def test_custom_timeout_reaches_runtime(self, tmp_project):
         """Pipeline should pass config timeout to ClaudeCodeRuntime."""

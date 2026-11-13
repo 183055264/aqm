@@ -568,6 +568,31 @@ class TestRestartEdgeCases:
         with pytest.raises(ValueError, match="cannot be restarted"):
             pipeline.restart_task(task.id)
 
+    def test_restart_task_without_any_stages(self, tmp_path):
+        """A task that died before stage 1 was saved restarts from scratch.
+
+        Regression: ``from_stage`` defaulted to ``len(task.stages)`` == 0 and
+        the range check rejected it, so "restart" silently failed for every
+        task that had no stage records.
+        """
+        root = init_project(tmp_path)
+        agents = _linear_agents()
+        pipeline, queue = _make_pipeline(agents, root)
+
+        task = Task(description="Never started")
+        task.status = TaskStatus.stalled
+        queue.push(task, "writer")
+
+        pipeline._runtimes["claude"] = _mock_runtime(
+            lambda p, a, t, **kw: f"Output from {a.id}"
+        )
+        result = pipeline.restart_task(task.id)
+
+        assert result.status == TaskStatus.completed
+        assert result.stages
+        assert result.stages[0].agent_id == "writer"
+        assert result.stages[0].stage_number == 1
+
     def test_restart_invalid_stage_raises(self, tmp_path):
         root = init_project(tmp_path)
         agents = _linear_agents()

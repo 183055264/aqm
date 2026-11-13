@@ -17,6 +17,8 @@ from pathlib import Path
 from aqm.core.agent import AgentDefinition, MCPServerConfig
 from aqm.core.task import Task
 from aqm.runtime.base import AbstractRuntime, OutputCallback, RuntimeExecutionError, ThinkingCallback, ToolCallback
+from aqm.runtime.claude_config import claude_thinking_args
+from aqm.runtime.stream_guard import ThinkingGuard, collapse_repeats
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +218,9 @@ class ClaudeCodeRuntime(AbstractRuntime):
         if agent.model:
             cmd.extend(["--model", agent.model])
 
+        # Override a global CLAUDE_CODE_DISABLE_THINKING=1 so thinking streams.
+        cmd.extend(claude_thinking_args())
+
         if agent.cli_flags:
             cmd.extend(agent.cli_flags)
 
@@ -262,6 +267,8 @@ class ClaudeCodeRuntime(AbstractRuntime):
                         cmd,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         cwd=str(self.project_root),
                         timeout=self._timeout,
                     )
@@ -355,6 +362,8 @@ class ClaudeCodeRuntime(AbstractRuntime):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(self.project_root),
             env=os.environ.copy(),
         )
@@ -362,6 +371,7 @@ class ClaudeCodeRuntime(AbstractRuntime):
         output_parts: list[str] = []
         got_stream_events = False  # Track if we received deltas
         callback_errors = 0
+        thinking_guard = ThinkingGuard()
         _MAX_CALLBACK_ERRORS = 10
         # Use selectors for non-blocking reads with heartbeat support.
         # This prevents the CLI from appearing hung during long operations.
@@ -427,6 +437,7 @@ class ClaudeCodeRuntime(AbstractRuntime):
                         delta_type = delta.get("type", "")
                         if delta_type == "thinking_delta":
                             thinking_text = delta.get("thinking", "")
+                            thinking_text = thinking_guard.feed(thinking_text) if thinking_text else ""
                             if thinking_text and on_thinking:
                                 try:
                                     on_thinking(thinking_text)
@@ -475,7 +486,7 @@ class ClaudeCodeRuntime(AbstractRuntime):
                     for block in msg.get("content", []):
                         btype = block.get("type", "")
                         if btype == "thinking":
-                            thinking_text = block.get("thinking", "")
+                            thinking_text = collapse_repeats(block.get("thinking", ""))
                             if thinking_text and on_thinking:
                                 try:
                                     on_thinking(thinking_text)

@@ -211,6 +211,97 @@ def check_permissions(data: dict[str, Any]) -> list[ValidationWarning]:
 
 
 # ---------------------------------------------------------------------------
+# Work-block (chunks) checks
+# ---------------------------------------------------------------------------
+
+
+def check_chunks(data: dict[str, Any]) -> list[ValidationWarning]:
+    """Validate ``chunks`` and session consensus settings."""
+    warnings: list[ValidationWarning] = []
+    agents = data.get("agents", [])
+
+    for i, agent in enumerate(agents):
+        if not isinstance(agent, dict):
+            continue
+        agent_id = agent.get("id", f"#{i}")
+        prefix = f"agents[{i}]({agent_id})"
+        agent_type = agent.get("type", "agent")
+
+        if agent_type not in ("agent", "session"):
+            warnings.append(ValidationWarning(
+                level="error",
+                path=f"{prefix}.type",
+                message=f"Unknown agent type '{agent_type}'",
+                fix="Use 'agent' or 'session'.",
+            ))
+
+        chunks = agent.get("chunks")
+        consensus = agent.get("consensus") or {}
+        require_done = bool(
+            isinstance(consensus, dict) and consensus.get("require_chunks_done")
+        )
+        if require_done and not chunks:
+            warnings.append(ValidationWarning(
+                level="error",
+                path=f"{prefix}.consensus.require_chunks_done",
+                message="require_chunks_done=true but no chunks config",
+                fix="Add a 'chunks' block or disable require_chunks_done.",
+            ))
+        if chunks is None:
+            continue
+        if not isinstance(chunks, dict):
+            warnings.append(ValidationWarning(
+                level="error",
+                path=f"{prefix}.chunks",
+                message="chunks must be a mapping",
+                fix="Use a mapping with enabled/initial/enforce fields.",
+            ))
+            continue
+
+        enforce = chunks.get("enforce")
+        if enforce not in (None, "off", "warn", "retry", "fail"):
+            warnings.append(ValidationWarning(
+                level="warning",
+                path=f"{prefix}.chunks.enforce",
+                message=f"Unknown chunks.enforce value '{enforce}'",
+                fix="Use off / warn / retry / fail.",
+            ))
+        retry_limit = chunks.get("retry_limit")
+        if retry_limit is not None and (
+            not isinstance(retry_limit, int) or retry_limit < 0
+        ):
+            warnings.append(ValidationWarning(
+                level="warning",
+                path=f"{prefix}.chunks.retry_limit",
+                message="chunks.retry_limit must be a non-negative integer",
+                fix="Use 0 or a positive integer.",
+            ))
+        initial = chunks.get("initial")
+        if initial is not None and not isinstance(initial, list):
+            warnings.append(ValidationWarning(
+                level="warning",
+                path=f"{prefix}.chunks.initial",
+                message="chunks.initial must be a list",
+                fix="Use a YAML list of descriptions.",
+            ))
+        elif isinstance(initial, list):
+            for j, item in enumerate(initial):
+                if isinstance(item, str) and item.strip():
+                    continue
+                if isinstance(item, dict) and (
+                    item.get("description") or item.get("title")
+                ):
+                    continue
+                warnings.append(ValidationWarning(
+                    level="warning",
+                    path=f"{prefix}.chunks.initial[{j}]",
+                    message="Empty or invalid work-block entry",
+                    fix="Use a non-empty description string.",
+                ))
+    return warnings
+
+
+# ---------------------------------------------------------------------------
 # Combined check
 # ---------------------------------------------------------------------------
 
@@ -231,4 +322,5 @@ def run_all_checks(data: dict[str, Any]) -> list[ValidationWarning]:
     warnings: list[ValidationWarning] = []
     warnings.extend(check_resource_availability(data))
     warnings.extend(check_permissions(data))
+    warnings.extend(check_chunks(data))
     return warnings

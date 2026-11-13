@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +33,21 @@ class SetDefaultRequest(BaseModel):
 
 class AgentRequest(BaseModel):
     id: str
+    type: str = "agent"  # agent | session
     name: str = ""
     runtime: str = "claude"
     system_prompt: str = ""
-    handoffs: list[dict] = []
+    model: str | None = None
+    handoffs: list[dict] = Field(default_factory=list)
     gate: dict | None = None
-    mcp: list[dict] = []
+    mcp: list[dict] = Field(default_factory=list)
     context_strategy: str = "both"
     human_input: dict | None = None
+    participants: list[str] = Field(default_factory=list)
+    max_rounds: int | None = None
+    summary_agent: str | None = None
+    consensus: dict | None = None
+    chunks: dict | None = None
 
 
 def create_pipelines_router(project_root: Path) -> APIRouter:
@@ -178,14 +185,21 @@ def create_pipelines_router(project_root: Path) -> APIRouter:
         return [
             {
                 "id": a.get("id", ""),
+                "type": a.get("type", "agent"),
                 "name": a.get("name", ""),
                 "runtime": a.get("runtime", ""),
+                "model": a.get("model", ""),
                 "system_prompt": a.get("system_prompt", ""),
                 "handoffs": a.get("handoffs", []),
                 "gate": a.get("gate"),
                 "mcp": a.get("mcp", []),
                 "context_strategy": a.get("context_strategy", "both"),
                 "human_input": a.get("human_input"),
+                "participants": a.get("participants", []),
+                "max_rounds": a.get("max_rounds"),
+                "summary_agent": a.get("summary_agent"),
+                "consensus": a.get("consensus"),
+                "chunks": a.get("chunks"),
             }
             for a in agents
         ]
@@ -197,17 +211,24 @@ def create_pipelines_router(project_root: Path) -> APIRouter:
         # Check for duplicate ID
         if any(a.get("id") == req.id for a in agents):
             raise HTTPException(409, f"Agent '{req.id}' already exists")
-        agent_dict = {"id": req.id, "name": req.name, "runtime": req.runtime, "system_prompt": req.system_prompt}
-        if req.handoffs:
-            agent_dict["handoffs"] = req.handoffs
-        if req.gate:
-            agent_dict["gate"] = req.gate
-        if req.mcp:
-            agent_dict["mcp"] = req.mcp
-        if req.context_strategy != "both":
-            agent_dict["context_strategy"] = req.context_strategy
-        if req.human_input:
-            agent_dict["human_input"] = req.human_input
+        agent_dict = req.model_dump(exclude_none=True)
+        if not agent_dict.get("model"):
+            agent_dict.pop("model", None)
+        if agent_dict.get("type", "agent") == "agent":
+            for key in ("type", "participants", "max_rounds", "summary_agent", "consensus"):
+                agent_dict.pop(key, None)
+        if not req.gate:
+            agent_dict.pop("gate", None)
+        if not req.mcp:
+            agent_dict.pop("mcp", None)
+        if req.context_strategy == "both":
+            agent_dict.pop("context_strategy", None)
+        if not req.human_input:
+            agent_dict.pop("human_input", None)
+        if not req.chunks:
+            agent_dict.pop("chunks", None)
+        elif req.chunks.get("enabled") is True and len(req.chunks) == 1:
+            agent_dict.pop("chunks", None)
         agents.append(agent_dict)
         data["agents"] = agents
         _save_pipeline_yaml(name, data)
@@ -220,21 +241,47 @@ def create_pipelines_router(project_root: Path) -> APIRouter:
         idx = next((i for i, a in enumerate(agents) if a.get("id") == agent_id), None)
         if idx is None:
             raise HTTPException(404, f"Agent '{agent_id}' not found")
-        agent_dict = {"id": req.id, "name": req.name, "runtime": req.runtime, "system_prompt": req.system_prompt}
-        if req.handoffs:
-            agent_dict["handoffs"] = req.handoffs
-        if req.gate:
-            agent_dict["gate"] = req.gate
-        if req.mcp:
-            agent_dict["mcp"] = req.mcp
-        if req.context_strategy != "both":
-            agent_dict["context_strategy"] = req.context_strategy
-        if req.human_input:
-            agent_dict["human_input"] = req.human_input
+        if req.id != agent_id:
+            raise HTTPException(400, "Agent ID cannot be changed")
+        agent_dict = dict(agents[idx])
+        updates = req.model_dump(exclude_unset=True)
+        cleared: list[str] = []
+        old_runtime = agent_dict.get("runtime")
+        if "runtime" in updates and updates.get("runtime") != old_runtime:
+            # cli_flags / model are runtime-specific (e.g. Claude's
+            # --allowedTools is rejected by opencode/kilo/cline). Drop stale
+            # values so switching runtime in the UI cannot break startup.
+            for key in ("cli_flags", "model"):
+                if key in agent_dict:
+                    agent_dict.pop(key, None)
+                    if not updates.get(key):
+                        cleared.append(key)
+        for field in (
+            "type", "name", "runtime", "system_prompt", "model", "handoffs",
+            "gate", "mcp", "context_strategy", "human_input", "participants",
+            "max_rounds", "summary_agent", "consensus", "chunks",
+        ):
+            if field not in updates:
+                continue
+            value = updates[field]
+            if field in ("gate", "human_input", "consensus", "chunks") and value is None:
+                agent_dict.pop(field, None)
+            elif field == "model" and not value:
+                agent_dict.pop(field, None)
+            else:
+                agent_dict[field] = value
+        # Switching a session back to a normal agent drops session-only fields.
+        if agent_dict.get("type", "agent") == "agent":
+            for key in ("type", "participants", "max_rounds", "summary_agent", "consensus"):
+                agent_dict.pop(key, None)
+        elif agent_dict.get("type") == "session" and not agent_dict.get("participants"):
+            agent_dict["participants"] = []
+        if not agent_dict.get("chunks"):
+            agent_dict.pop("chunks", None)
         agents[idx] = agent_dict
         data["agents"] = agents
         _save_pipeline_yaml(name, data)
-        return {"status": "updated", "agent_id": req.id}
+        return {"status": "updated", "agent_id": req.id, "cleared": cleared}
 
     @router.delete("/api/pipelines/{name}/agents/{agent_id}")
     async def api_delete_agent(name: str, agent_id: str):

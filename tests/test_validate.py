@@ -377,6 +377,84 @@ class TestRunAllChecks:
 
 
 # ---------------------------------------------------------------------------
+# Work-block (chunks) checks
+# ---------------------------------------------------------------------------
+
+
+class TestCheckChunks:
+
+    def test_valid_config_no_warnings(self):
+        from aqm.core.validate import check_chunks
+
+        data = {"agents": [{
+            "id": "a",
+            "chunks": {
+                "enabled": True,
+                "enforce": "retry",
+                "retry_limit": 2,
+                "initial": ["做第一件事", {"description": "做第二件事"}],
+            },
+        }]}
+        assert check_chunks(data) == []
+
+    def test_unknown_enforce_warns(self):
+        from aqm.core.validate import check_chunks
+
+        data = {"agents": [{"id": "a", "chunks": {"enforce": "sometimes"}}]}
+        warnings = check_chunks(data)
+        assert any("enforce" in w.path for w in warnings)
+
+    def test_negative_retry_limit_warns(self):
+        from aqm.core.validate import check_chunks
+
+        data = {"agents": [{"id": "a", "chunks": {"retry_limit": -1}}]}
+        warnings = check_chunks(data)
+        assert any("retry_limit" in w.path for w in warnings)
+
+    def test_initial_must_be_list(self):
+        from aqm.core.validate import check_chunks
+
+        data = {"agents": [{"id": "a", "chunks": {"initial": "one"}}]}
+        warnings = check_chunks(data)
+        assert any("initial" in w.path for w in warnings)
+
+    def test_empty_initial_entry_warns(self):
+        from aqm.core.validate import check_chunks
+
+        data = {"agents": [{"id": "a", "chunks": {"initial": ["  ", {}]}}]}
+        warnings = check_chunks(data)
+        assert len(warnings) == 2
+
+    def test_require_chunks_without_config_is_error(self):
+        from aqm.core.validate import check_chunks
+
+        data = {"agents": [{
+            "id": "a",
+            "type": "session",
+            "consensus": {"require_chunks_done": True},
+        }]}
+        warnings = check_chunks(data)
+        assert any(w.level == "error" for w in warnings)
+
+    def test_chunks_on_regular_agent_is_allowed(self):
+        from aqm.core.validate import check_chunks
+
+        data = {"agents": [{
+            "id": "a",
+            "type": "agent",
+            "chunks": {"enabled": True},
+        }]}
+        assert check_chunks(data) == []
+
+    def test_unknown_agent_type_is_error(self):
+        from aqm.core.validate import check_chunks
+
+        data = {"agents": [{"id": "a", "type": "meeting"}]}
+        warnings = check_chunks(data)
+        assert any(w.level == "error" and "type" in w.path for w in warnings)
+
+
+# ---------------------------------------------------------------------------
 # ValidationWarning structure
 # ---------------------------------------------------------------------------
 

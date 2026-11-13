@@ -10,3 +10,6 @@ venv/
 *.db
 .aqm/queue.db*
 .aqm/tasks/
+.aqm/meetings/
+meeting.md
+.aqm/restart.log

@@ -1007,6 +1007,34 @@ function setChunkSplitState(text, isError) {{
 }}
 
 document.addEventListener('DOMContentLoaded', loadChunks);
+
+// A page rendered while the task was still queued has no live panel (and no
+// SSE stream), so it would keep showing "任务尚未开始" even after the pipeline
+// started. Poll the task and reload once it becomes active.
+(function pollQueuedTask() {{
+  if (LIVE_RENDERED) return;
+  if (TASK_STATUS !== 'pending' && TASK_STATUS !== 'stalled') return;
+  const ACTIVE = ['in_progress', 'awaiting_gate', 'awaiting_human_input'];
+  const DONE = ['completed', 'failed', 'cancelled'];
+  let tries = 0;
+  const timer = setInterval(async () => {{
+    tries += 1;
+    if (tries > 240) {{ clearInterval(timer); return; }}
+    try {{
+      const res = await fetch(
+        '/api/tasks/' + encodeURIComponent({task_id_js}) + '?t=' + Date.now(),
+        {{cache: 'no-store'}}
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const st = String(data.status || '');
+      if (ACTIVE.includes(st) || DONE.includes(st)) {{
+        clearInterval(timer);
+        location.reload();
+      }}
+    }} catch (err) {{}}
+  }}, 5000);
+}})();
 </script>"""
 
     # ── Fix form ──────────────────────────────────────────────────────
@@ -1032,6 +1060,11 @@ document.addEventListener('DOMContentLoaded', loadChunks);
     )
 
     # Tab: Live Output (only visible when task is active)
+    active_statuses_set = {
+        TaskStatus.in_progress,
+        TaskStatus.awaiting_gate,
+        TaskStatus.awaiting_human_input,
+    }
     if show_live:
         # Approval / human-input panels belong on the tab that is open by
         # default while the task runs, otherwise the user has to hunt for
@@ -1041,8 +1074,50 @@ document.addEventListener('DOMContentLoaded', loadChunks);
             f"{files_card}\n" if task.status == TaskStatus.awaiting_gate else ""
         )
         tab_output = f"{gate_actions}\n{gate_files}{human_input_panel}\n{live_panel}"
+    elif task.status in active_statuses_set:
+        # The task is running, but it belongs to another project: its events
+        # are published by that project's own aqm process, so this console can
+        # only read the on-disk snapshot.  Say so instead of claiming the task
+        # is not running.
+        latest_stage = task.stages[-1] if task.stages else None
+        latest_stage_html = ""
+        if latest_stage is not None:
+            latest_stage_html = (
+                '<div style="margin-top:10px;font-size:13px;">'
+                f"已落盘 {len(task.stages)} 个阶段，最近一次是"
+                f" <strong>阶段 {latest_stage.stage_number}</strong>"
+                f" · {agent_tip(latest_stage.agent_id)}</div>"
+                '<details style="margin-top:6px;">'
+                "<summary>最近阶段输出</summary>"
+                f"{copy_pre(latest_stage.output_text)}</details>"
+            )
+        current_agent_html = (
+            agent_tip(task.current_agent_id) if task.current_agent_id else "-"
+        )
+        tab_output = f"""\
+<div class="card" style="margin-top:16px;border-color:var(--orange);">
+  <h3><span class="live-dot" style="background:var(--orange);"></span>任务在另一个项目中运行</h3>
+  <p style="font-size:13px;">该任务属于项目 <code>{esc(task_project_dir)}</code>，
+  由该项目自己的 aqm 服务在后台执行。当前控制台运行的项目是
+  <code>{esc(current_project_dir)}</code>，订阅不到它的实时事件流，
+  所以这里不显示逐字输出。</p>
+  <p style="font-size:13px;color:var(--text-dim);">
+  当前状态：{badge(display_status(task))} · 代理：{current_agent_html}。
+  想看实时输出：在该项目目录运行
+  <code>aqm --project "{esc(task_project_dir)}" serve</code> 并打开它的控制台；
+  或者在「时间线」标签查看已落盘的阶段输出，刷新本页即可更新快照。</p>
+  {latest_stage_html}
+</div>"""
+    elif task.status in (TaskStatus.pending, TaskStatus.stalled):
+        tab_output = (
+            '<div class="empty-state" style="padding:24px;">'
+            "任务尚未开始，流水线启动后这里会自动刷新为实时输出。</div>"
+        )
     else:
-        tab_output = '<div class="empty-state" style="padding:24px;">任务当前未在运行。</div>'
+        tab_output = (
+            '<div class="empty-state" style="padding:24px;">'
+            "任务已结束。历史输出见「时间线」标签。</div>"
+        )
 
     # Default tab
     default_tab = "tab-2" if show_live else "tab-1"

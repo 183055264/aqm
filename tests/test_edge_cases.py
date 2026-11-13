@@ -363,3 +363,44 @@ class TestGateEdgeCases:
         assert gate._get_model() == "claude-test"
         assert gate._get_system_prompt() == "judge this"
         assert gate._get_timeout() == 7
+
+
+class TestStaleMeetingSnapshots:
+    """A meeting read from another project must not stay frozen as 'running'."""
+
+    @staticmethod
+    def _make_meeting(root: Path):
+        from aqm import meeting as meeting_mod
+
+        return meeting_mod.create_meeting(
+            topic="stale state",
+            description="",
+            agents=[{"id": "a1", "name": "A1", "runtime": "claude", "role": "r"}],
+            rounds=1,
+            project_root=root,
+        )
+
+    def test_list_meetings_refreshes_foreign_running_copy(self, tmp_path):
+        from aqm import meeting as meeting_mod
+
+        meeting = self._make_meeting(tmp_path)
+        try:
+            # Disk copy: the owning process finished the meeting.
+            meeting.status = "completed"
+            meeting.finished_at = "2026-11-13T14:28:22+00:00"
+            meeting_mod._save_meeting(meeting, tmp_path)
+
+            # In-memory copy: stale snapshot that claims to be running, but this
+            # process owns no runner thread for it.
+            stale = meeting_mod.Meeting.from_persist_dict(meeting.to_persist_dict())
+            stale.status = "running"
+            stale.finished_at = ""
+            with meeting_mod._meetings_lock:
+                meeting_mod._meetings[meeting.id] = stale
+
+            listed = {m.id: m for m in meeting_mod.list_meetings(tmp_path)}
+            assert listed[meeting.id].status == "completed"
+            assert meeting_mod.get_meeting(meeting.id, tmp_path).status == "completed"
+        finally:
+            with meeting_mod._meetings_lock:
+                meeting_mod._meetings.pop(meeting.id, None)

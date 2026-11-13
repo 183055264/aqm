@@ -329,16 +329,32 @@ def create_meeting(
     return meeting
 
 
+def _is_locally_running(m: Meeting) -> bool:
+    """True only when *this* process owns a live runner thread for the meeting.
+
+    A meeting loaded from another project's directory can carry a stale
+    ``running`` status: it was read from disk while another aqm process was
+    driving it.  Only the owning process may keep its in-memory copy.
+    """
+    thread = getattr(m, "_thread", None)
+    return bool(thread and thread.is_alive())
+
+
 def get_meeting(meeting_id: str, project_root: Optional[Path] = None) -> Optional[Meeting]:
     with _meetings_lock:
         m = _meetings.get(meeting_id)
-    if m:
+    if m and _is_locally_running(m):
         return m
-    if project_root:
-        m = _load_meeting_from_disk(meeting_id, project_root)
-        if m:
+    # Refresh from disk when the cached copy is not driven by this process.
+    disk_root = project_root
+    if m and m.project_dir and Path(m.project_dir).is_dir():
+        disk_root = Path(m.project_dir)
+    if disk_root:
+        disk = _load_meeting_from_disk(meeting_id, disk_root)
+        if disk and (m is None or _activity_key(disk) > _activity_key(m)):
             with _meetings_lock:
-                _meetings[meeting_id] = m
+                _meetings[meeting_id] = disk
+            return disk
     return m
 
 
@@ -387,16 +403,18 @@ def list_meetings(project_root: Optional[Path] = None) -> list[Meeting]:
     except Exception:
         pass
 
-    # Merge with in-memory copies: newest wins, but never clobber a running one
+    # Merge with in-memory copies: newest wins, but never clobber a meeting that
+    # is actively running in *this* process.  A stale "running" snapshot loaded
+    # from another project (or another aqm process) must be refreshed from disk.
     with _meetings_lock:
         for mid, m in found.items():
             cur = _meetings.get(mid)
             if cur is None:
                 _meetings[mid] = m
                 meetings.append(m)
-            elif cur.status == MeetingStatus.running.value:
+            elif _is_locally_running(cur):
                 continue  # preserve the live running meeting object
-            elif _activity_key(m) > _activity_key(cur):
+            elif _activity_key(m) > _activity_key(cur) or cur.status == MeetingStatus.running.value:
                 _meetings[mid] = m
                 meetings = [m if x is cur else x for x in meetings]
 

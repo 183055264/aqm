@@ -1670,7 +1670,13 @@ function _initMeetingPage() {
     setTimeout(_initMeetingPage, 50);
   }
 }
-_initMeetingPage();
+// The layout's shared helpers load after this script, so initialise on parse
+// completion; the retry below stays as a safety net.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _initMeetingPage);
+} else {
+  _initMeetingPage();
+}
 </script>
 """
     return layout("会议协作", body, active="meeting")

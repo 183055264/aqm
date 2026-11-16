@@ -1036,11 +1036,13 @@ async function importTeamTemplate() {{
   }}
 }}
 
-/* Init: load agent cards if editing */
-if (EDIT_PIPELINE) {{
-  setTimeout(loadAgentCards, 50);
-  setTimeout(loadTeamTemplateOptions, 60);
-}}
+/* Init: the layout's shared helpers load after this script, so wait for the
+   document to finish parsing instead of relying on timers. */
+document.addEventListener('DOMContentLoaded', function () {{
+  if (!EDIT_PIPELINE) return;
+  loadAgentCards();
+  loadTeamTemplateOptions();
+}});
 </script>"""
 
     body = (

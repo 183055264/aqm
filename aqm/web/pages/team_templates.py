@@ -232,7 +232,11 @@ async function loadTemplates() {
   }
 }
 
-loadTemplates();
+/* The layout's shared helpers (apiFetch / showToast) are loaded *after* this
+   page's inline script, so initialise only once the document is parsed. */
+document.addEventListener('DOMContentLoaded', function () {
+  loadTemplates();
+});
 </script>
 """
     return layout("团队模板", body, active="team-templates")

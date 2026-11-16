@@ -27,7 +27,7 @@ def render_tasks(
         pipeline_selector = f"""\
 <div class="card" style="margin-bottom:16px;padding:12px 16px;display:flex;align-items:center;gap:12px;">
   <label style="font-weight:600;white-space:nowrap;">流水线:</label>
-  <select id="pipelineSelector" onchange="location.href='/tasks?pipeline='+this.value"
+  <select id="pipelineSelector" class="control" onchange="location.href='/tasks?pipeline='+this.value"
           style="flex:1;max-width:300px;">{pipe_options}</select>
   <span style="font-size:12px;opacity:.6;">{len(pipelines)} 条流水线</span>
 </div>"""

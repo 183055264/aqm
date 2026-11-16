@@ -178,6 +178,10 @@ pre { background:var(--surface2); border:1px solid var(--border); border-radius:
 .form-group input:focus,.form-group textarea:focus,.form-group select:focus { border-color:var(--accent); outline:none; }
 .form-group textarea { min-height:80px; resize:vertical; }
 .form-group select { appearance:none; cursor:pointer; }
+/* Standalone controls outside .form-group (toolbars, inline rows). */
+.control { background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:8px 12px; color:var(--text); font-size:14px; font-family:inherit; height:38px; box-sizing:border-box; }
+.control:focus { border-color:var(--accent); outline:none; }
+select.control { appearance:none; cursor:pointer; }
 /* One-line form: input/select and buttons share the same bottom edge and
    height, so "name + create" style rows never look misaligned. */
 .form-row { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
@@ -191,7 +195,8 @@ pre { background:var(--surface2); border:1px solid var(--border); border-radius:
 
 /* ── Agent diagram ──────────────────────────── */
 .graph-container { width:100%; overflow:auto; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; position:relative; }
-.graph-controls { display:flex; gap:8px; margin-bottom:12px; }
+.graph-controls { display:flex; gap:8px; margin-bottom:12px; align-items:center; flex-wrap:wrap; }
+.graph-controls .control { height:30px; font-size:13px; padding:4px 10px; }
 .agent-node-html { background:var(--surface2); border:2px solid var(--border); border-radius:var(--radius); padding:12px 16px; min-width:180px; cursor:pointer; transition:.2s; }
 .agent-node-html:hover { border-color:var(--accent); }
 .agent-node-html .agent-title { font-weight:700; font-size:14px; color:var(--accent); margin-bottom:4px; }

@@ -261,7 +261,7 @@ def render_agents(
         pipeline_selector = (
             f'<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;">'
             f'<label style="font-weight:600;">流水线:</label>'
-            f'<select onchange="location.href=\'/agents?pipeline=\'+this.value"'
+            f'<select class="control" onchange="location.href=\'/agents?pipeline=\'+this.value"'
             f' style="max-width:300px;">{pipe_options}</select></div>'
         )
 
@@ -298,7 +298,7 @@ def render_agents(
         task_selector = f"""\
 <div style="display:flex;align-items:center;gap:8px;">
   <label style="font-size:13px;color:var(--text-dim);">高亮路径:</label>
-  <select onchange="highlightPath(this.value)" style="max-width:300px;font-size:13px;">
+  <select class="control" onchange="highlightPath(this.value)" style="max-width:300px;">
     <option value="">无</option>
     {task_options}
   </select>

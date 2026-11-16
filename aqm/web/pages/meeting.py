@@ -42,11 +42,11 @@ def render_meeting() -> str:
       <select id="mtTemplate" onchange="applyTeamTemplate(this.value)" style="width:100%;">
         <option value="">（手动配置）</option>
       </select>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:4px;">选中模板会覆盖下方成员，包括提示词。</div>
     </div>
     <button class="btn" onclick="saveCurrentAsTemplate()">另存为模板</button>
     <a class="btn" href="/team-templates">管理模板</a>
   </div>
+  <div style="font-size:12px;color:var(--text-dim);margin-top:4px;">选中模板会覆盖下方成员，包括提示词。</div>
 
   <div style="margin-top:16px;">
     <label style="font-weight:600;font-size:13px;color:var(--text-dim);">参会代理</label>

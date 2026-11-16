@@ -83,16 +83,14 @@ def render_pipelines(
     create_section = """\
 <div class="card">
   <h3>创建流水线</h3>
-  <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;">
+  <div class="form-row" style="margin-top:12px;">
     <div class="form-group" style="flex:1;min-width:200px;">
       <label for="newName">流水线名称</label>
       <input id="newName" type="text" placeholder="my-pipeline"
              onkeydown="if(event.key==='Enter')createPipeline('template')">
     </div>
-    <div style="display:flex;gap:8px;align-items:flex-end;">
-      <button class="btn btn-primary" onclick="createPipeline('template')">从模板创建</button>
-      <button class="btn" onclick="createPipeline('blank')">空白</button>
-    </div>
+    <button class="btn btn-primary" onclick="createPipeline('template')">从模板创建</button>
+    <button class="btn" onclick="createPipeline('blank')">空白</button>
   </div>
 </div>"""
 
@@ -141,13 +139,15 @@ def render_pipelines(
 
   <!-- Visual Editor Panel -->
   <div id="panelVisual" style="margin-top:16px;">
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
-      <label style="font-size:13px;color:var(--text-dim);">从团队模板导入：</label>
-      <select id="pipelineTemplateSelect" style="min-width:200px;">
-        <option value="">（选择模板）</option>
-      </select>
-      <button class="btn btn-sm" onclick="importTeamTemplate()">导入成员</button>
-      <a class="btn btn-sm" href="/team-templates" target="_blank">管理模板</a>
+    <div class="form-row" style="margin-bottom:12px;">
+      <div class="form-group" style="flex:0 1 300px;min-width:220px;">
+        <label>从团队模板导入</label>
+        <select id="pipelineTemplateSelect" style="width:100%;">
+          <option value="">（选择模板）</option>
+        </select>
+      </div>
+      <button class="btn" onclick="importTeamTemplate()">导入成员</button>
+      <a class="btn" href="/team-templates" target="_blank">管理模板</a>
     </div>
     <div id="agentCards">
       <div style="text-align:center;color:var(--text-dim);padding:24px;">加载代理中...</div>

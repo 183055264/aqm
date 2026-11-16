@@ -36,15 +36,15 @@ def render_meeting() -> str:
     </div>
   </div>
 
-  <div style="margin-top:16px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-    <div class="form-group" style="margin-bottom:0;min-width:240px;">
+  <div class="form-row" style="margin-top:16px;">
+    <div class="form-group" style="flex:0 1 260px;min-width:220px;">
       <label>团队模板（全局）</label>
       <select id="mtTemplate" onchange="applyTeamTemplate(this.value)" style="width:100%;">
         <option value="">（手动配置）</option>
       </select>
     </div>
-    <button class="btn btn-sm" onclick="saveCurrentAsTemplate()">另存为模板</button>
-    <a class="btn btn-sm" href="/team-templates">管理模板</a>
+    <button class="btn" onclick="saveCurrentAsTemplate()">另存为模板</button>
+    <a class="btn" href="/team-templates">管理模板</a>
   </div>
 
   <div style="margin-top:16px;">

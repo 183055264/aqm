@@ -7,6 +7,18 @@ from aqm.web.templates import layout
 
 def render_team_templates() -> str:
     body = r"""
+<style>
+/* The member grid uses bare inputs (no .form-group wrapper), so give them the
+   same look and height as the rest of the console. */
+.tt-agent-row input, .tt-agent-row select, .tt-agent-row textarea {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; color: var(--text); font-size: 12px; font-family: inherit;
+}
+.tt-agent-row input:focus, .tt-agent-row select:focus, .tt-agent-row textarea:focus {
+  border-color: var(--accent); outline: none;
+}
+.tt-agent-row input, .tt-agent-row select { height: 34px; box-sizing: border-box; }
+</style>
 <h1>团队模板</h1>
 
 <div class="card">

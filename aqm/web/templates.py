@@ -178,6 +178,13 @@ pre { background:var(--surface2); border:1px solid var(--border); border-radius:
 .form-group input:focus,.form-group textarea:focus,.form-group select:focus { border-color:var(--accent); outline:none; }
 .form-group textarea { min-height:80px; resize:vertical; }
 .form-group select { appearance:none; cursor:pointer; }
+/* One-line form: input/select and buttons share the same bottom edge and
+   height, so "name + create" style rows never look misaligned. */
+.form-row { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+.form-row .form-group { margin-bottom:0; flex:1; min-width:200px; }
+.form-row input, .form-row select, .form-row textarea, .form-row .btn { height:38px; box-sizing:border-box; }
+.form-row textarea { height:auto; }
+.form-row .btn { display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; }
 .filter-bar { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:16px; }
 .filter-bar .form-group { margin-bottom:0; }
 .filter-bar .form-group.flex-1 { flex:1; min-width:160px; }

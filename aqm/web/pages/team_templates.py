@@ -27,8 +27,8 @@ def render_team_templates() -> str:
     任何新项目的会议、流水线都可以直接调用。
   </p>
   <p style="font-size:13px;color:var(--text-dim);">
-    模板只保存成员骨架（id / 运行时 / 角色 / 提示词）。会议或任务一旦创建，就会把自己的成员配置固化成快照，
-    之后修改模板不会影响已经创建好的记录。
+    模板保存成员（id / 运行时 / 角色 / 提示词）。会议或任务一旦创建，就会把自己的成员配置固化成快照，
+    之后修改模板不会影响已经创建好的记录。提示词会原样带入，留空表示使用运行时自己的默认提示词。
   </p>
 </div>
 
@@ -70,7 +70,7 @@ def render_team_templates() -> str:
     <div id="ttAgents" style="margin-top:8px;"></div>
     <button class="btn btn-sm" onclick="addTtAgent()" style="margin-top:8px;">+ 添加成员</button>
     <div style="font-size:12px;color:var(--text-dim);margin-top:6px;">
-      提示词留空时，导入会议/流水线会自动使用该运行时的内置默认提示词。
+      模板中的提示词会原样带入会议/流水线；留空表示交给该运行时自己的默认提示词。
     </div>
   </div>
 </div>
@@ -102,7 +102,7 @@ function addTtAgent(agent) {
     <input class="tt-agent-name" type="text" placeholder="名称" value="${escapeValue(agent.name)}" style="width:100%;">
     <select class="tt-agent-runtime" style="width:100%;">${runtimeOptions(agent.runtime || 'claude')}</select>
     <input class="tt-agent-role" type="text" placeholder="角色" value="${escapeValue(agent.role)}" style="width:100%;">
-    <textarea class="tt-agent-prompt" rows="2" placeholder="系统提示词（留空用默认）" style="width:100%;font-size:12px;">${escapeValue(agent.system_prompt)}</textarea>
+    <textarea class="tt-agent-prompt" rows="2" placeholder="系统提示词（留空 = 运行时默认）" style="width:100%;font-size:12px;">${escapeValue(agent.system_prompt)}</textarea>
     <button type="button" class="btn btn-sm" style="color:var(--red);align-self:center;" onclick="this.closest('.tt-agent-row').remove()">&#10005;</button>
   `;
   list.appendChild(row);

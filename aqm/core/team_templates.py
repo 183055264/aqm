@@ -150,9 +150,10 @@ def delete_template(name: str, root: Path | None = None) -> bool:
 def resolve_agents(template: dict[str, Any]) -> list[dict[str, str]]:
     """Expand a template into concrete members.
 
-    Empty ``system_prompt`` / ``role`` fall back to the built-in defaults for
-    the same id (or runtime), so a skeleton stays useful without copying the
-    prompt text everywhere.
+    Name / role / model fall back to the built-in defaults for the same id (or
+    runtime) so a skeleton stays usable.  ``system_prompt`` is returned exactly
+    as stored: an empty prompt means "let the runtime use its own default", and
+    the UI must show that emptiness rather than silently filling it in.
     """
     from aqm.meeting import DEFAULT_AGENTS
 
@@ -166,9 +167,7 @@ def resolve_agents(template: dict[str, Any]) -> list[dict[str, str]]:
             "name": str(agent.get("name") or base.get("name") or agent.get("id") or ""),
             "runtime": str(agent.get("runtime") or ""),
             "role": str(agent.get("role") or base.get("role") or ""),
-            "system_prompt": str(
-                agent.get("system_prompt") or base.get("system_prompt") or ""
-            ),
+            "system_prompt": str(agent.get("system_prompt") or ""),
             "model": str(agent.get("model") or base.get("model") or ""),
         })
     return resolved

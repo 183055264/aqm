@@ -68,7 +68,7 @@ class TestTemplateStore:
         assert store.load_template("team-a") is None
         assert store.delete_template("team-a") is False
 
-    def test_empty_prompt_and_role_are_kept_but_resolved(self, tpl_dir):
+    def test_empty_prompt_stays_empty_but_role_is_resolved(self, tpl_dir):
         store.save_template(
             "skeleton",
             {"agents": [{"id": "claude", "runtime": "claude"}]},
@@ -77,8 +77,11 @@ class TestTemplateStore:
         assert loaded["agents"][0]["system_prompt"] == ""
 
         resolved = store.resolve_agents(loaded)
+        # Role/name get useful defaults, the prompt does not: an empty prompt
+        # means "runtime default" and the UI must show it as empty.
         assert resolved[0]["role"] == "架构师"
-        assert resolved[0]["system_prompt"].startswith("你是Claude")
+        assert resolved[0]["name"] == "claude"
+        assert resolved[0]["system_prompt"] == ""
 
     def test_explicit_prompt_wins_over_default(self, tpl_dir):
         store.save_template(
@@ -131,8 +134,14 @@ class TestTemplateStore:
         assert [a["runtime"] for a in data["agents"]] == [
             "claude", "opencode", "cline", "kilo",
         ]
-        # Skeleton only: prompts stay empty so they resolve to defaults.
-        assert all(a["system_prompt"] == "" for a in data["agents"])
+        # The bundled template ships short, generic example prompts so selecting
+        # it visibly changes the form.
+        for agent in data["agents"]:
+            assert agent["system_prompt"].strip(), agent["id"]
+            assert len(agent["system_prompt"]) < 160
+        # resolve_agents must return those prompts verbatim (no substitution).
+        resolved = {a["id"]: a for a in store.resolve_agents(data)}
+        assert resolved["claude"]["system_prompt"] == data["agents"][0]["system_prompt"]
 
 
 class TestTaskSnapshot:
@@ -267,7 +276,9 @@ class TestTeamTemplateApi:
 
         agents = client.get("/api/team-templates/api-team/agents").json()["agents"]
         assert agents[0]["role"] == "架构师"
-        assert agents[0]["system_prompt"].startswith("你是Claude")
+        # The template stores no prompt for claude, so the API must not invent
+        # one: an empty prompt means "use the runtime default".
+        assert agents[0]["system_prompt"] == ""
 
         upd = client.put(
             "/api/team-templates/api-team",

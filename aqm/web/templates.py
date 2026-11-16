@@ -569,10 +569,25 @@ function showProjectSwitch() {
 function hideProjectSwitch() {
   document.getElementById('projectSwitchModal')?.classList.remove('show');
 }
+// Read the PID of the server that is answering right now. Captured *before*
+// asking for a restart: the old process writes "success" just before it dies,
+// so without a baseline the first successful poll can already be the new
+// process and the page would never reload.
+async function fetchServerPid() {
+  try {
+    const res = await fetch('/api/project', {cache: 'no-store'});
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.pid || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // Restart status polling
-function pollRestartStatus(interval, maxAttempts, nextPath = null) {
+function pollRestartStatus(interval, maxAttempts, nextPath = null, baselinePid = null) {
   let attempts = 0;
-  let previousPid = null;
+  let oldPid = baselinePid;
   let reloading = false;
 
   async function reloadWhenNewServerReady(targetPath) {
@@ -584,7 +599,8 @@ function pollRestartStatus(interval, maxAttempts, nextPath = null) {
         const res = await fetch('/api/project/restart-status', {cache: 'no-store'});
         if (res.ok) {
           const data = await res.json();
-          if (data.pid && previousPid && data.pid !== previousPid) {
+          const isNewServer = data.pid && (!oldPid || data.pid !== oldPid);
+          if (isNewServer) {
             location.href = targetPath || location.href;
             return;
           }
@@ -598,11 +614,13 @@ function pollRestartStatus(interval, maxAttempts, nextPath = null) {
   const timer = setInterval(async () => {
     attempts++;
     try {
-      const res = await fetch('/api/project/restart-status');
+      const res = await fetch('/api/project/restart-status', {cache: 'no-store'});
       const data = await res.json();
-      if (data.pid && previousPid === null) previousPid = data.pid;
+      if (data.pid && oldPid === null) oldPid = data.pid;
+      // A different PID answering means the new server is already serving.
+      const newServerIsUp = Boolean(data.pid && oldPid && data.pid !== oldPid);
 
-      if (data.status === 'success' && !reloading) {
+      if (newServerIsUp && !reloading) {
         clearInterval(timer);
         reloading = true;
         let targetPath = null;
@@ -620,6 +638,12 @@ function pollRestartStatus(interval, maxAttempts, nextPath = null) {
           showToast('服务器重启成功，正在刷新页面...', 'success');
         }
         reloadWhenNewServerReady(targetPath || nextPath);
+      } else if (data.status === 'success' && !oldPid && !reloading) {
+        // No baseline (e.g. /api/project was unreachable): fall back to the
+        // old behaviour and reload once the status file says success.
+        clearInterval(timer);
+        reloading = true;
+        reloadWhenNewServerReady(nextPath);
       } else if (data.status === 'failed') {
         clearInterval(timer);
         const detail = data.detail || '未知错误';
@@ -661,6 +685,7 @@ async function restartTaskInProject(taskId, projectDir, fromStage, note) {
       });
       const switchData = await switchResponse.json();
       if (!switchResponse.ok) throw new Error(switchData.detail || '项目切换失败');
+      const baselinePid = await fetchServerPid();
       const restartResponse = await fetch('/api/project/restart', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
@@ -669,7 +694,7 @@ async function restartTaskInProject(taskId, projectDir, fromStage, note) {
       const restartData = await restartResponse.json().catch(() => ({}));
       if (!restartResponse.ok) throw new Error(restartData.detail || '服务器重启失败');
       showToast('正在切换项目并重启服务器...', 'info');
-      pollRestartStatus(2000, 30);
+      pollRestartStatus(2000, 30, null, baselinePid);
     } catch(e) {
       sessionStorage.removeItem('aqm_pending_task_restart');
       showToast(e.message, 'error');
@@ -707,6 +732,7 @@ async function switchConsoleTo(projectDir, nextPath) {
     });
     const switchData = await switchResponse.json().catch(() => ({}));
     if (!switchResponse.ok) throw new Error(switchData.detail || '项目切换失败');
+    const baselinePid = await fetchServerPid();
     const restartResponse = await fetch('/api/project/restart', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -715,7 +741,7 @@ async function switchConsoleTo(projectDir, nextPath) {
     const restartData = await restartResponse.json().catch(() => ({}));
     if (!restartResponse.ok) throw new Error(restartData.detail || '服务器重启失败');
     showToast('正在切换项目并重启服务器...', 'info');
-    pollRestartStatus(2000, 30, nextPath || null);
+    pollRestartStatus(2000, 30, nextPath || null, baselinePid);
   } catch (e) {
     showToast(e.message || '切换失败', 'error');
   }
@@ -776,6 +802,9 @@ async function switchProject() {
     }
     hideProjectSwitch();
     showToast('已切换项目，正在重启服务器...', 'info');
+    // Remember which process answered before the restart so the poller can
+    // tell the new server apart and reload automatically.
+    const baselinePid = await fetchServerPid();
     // Call restart API - server will start new instance and stop old one
     const res2 = await fetch('/api/project/restart', {
       method:'POST',
@@ -785,7 +814,7 @@ async function switchProject() {
     if (res2.ok) {
       showToast('服务器正在重启，请稍后...', 'info');
       // Poll for restart status
-      pollRestartStatus(2000, 30); // Check every 2s, max 60s
+      pollRestartStatus(2000, 30, '/', baselinePid); // Check every 2s, max 60s
     } else {
       const errData = await res2.json().catch(() => ({}));
       showToast('重启失败: ' + (errData.detail || '请手动重启服务器'), 'error');
@@ -812,6 +841,7 @@ async function initAndSwitchProject(path) {
     }
     hideProjectSwitch();
     showToast('项目已创建，正在重启服务器...', 'success');
+    const baselinePid = await fetchServerPid();
     // Call restart API
     const res3 = await fetch('/api/project/restart', {
       method:'POST',
@@ -820,7 +850,7 @@ async function initAndSwitchProject(path) {
     });
     if (res3.ok) {
       showToast('服务器正在重启，请稍后...', 'info');
-      pollRestartStatus(2000, 30);
+      pollRestartStatus(2000, 30, '/', baselinePid);
     } else {
       const errData = await res3.json().catch(() => ({}));
       showToast('重启失败: ' + (errData.detail || '请手动重启服务器'), 'error');
@@ -844,11 +874,12 @@ async function restartServer() {
   if (!confirm('确定要重启服务器吗？')) return;
   showToast('正在重启服务器...', 'info');
   try {
+    const baselinePid = await fetchServerPid();
     const res = await fetch('/api/project/restart', {method:'POST'});
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       showToast('服务器正在重启，请稍后...', 'info');
-      pollRestartStatus(2000, 30);
+      pollRestartStatus(2000, 30, null, baselinePid);
     } else {
       showToast('重启失败: ' + (data.detail || '请手动重启服务器'), 'error');
     }

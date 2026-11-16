@@ -837,6 +837,7 @@ def sidebar_html(active: str = "") -> str:
     links = [
         ("/", "概览", "dashboard", "dashboard"),
         ("/meeting", "会议", "meeting", "meeting"),
+        ("/team-templates", "团队模板", "team-templates", "agents"),
         ("/tasks", "任务", "tasks", "tasks"),
         ("/agents", "代理", "agents", "agents"),
         ("/pipelines", "流水线", "pipelines", "pipelines"),

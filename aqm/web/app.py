@@ -312,6 +312,11 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
             current_project_dir=str(project_root),
         )
 
+    @app.get("/team-templates", response_class=HTMLResponse)
+    async def team_templates_page():
+        from aqm.web.pages.team_templates import render_team_templates
+        return render_team_templates()
+
     @app.get("/registry", response_class=HTMLResponse)
     async def registry_page():
         from aqm.web.pages.registry import render_registry
@@ -717,11 +722,13 @@ echo "Server exited with code $?" >> "{log_file}"
     from aqm.web.api.registry import create_registry_router
     from aqm.web.api.validate import create_validate_router
     from aqm.web.api.meeting import create_meeting_router
+    from aqm.web.api.team_templates import create_team_templates_router
 
     app.include_router(create_tasks_router(project_root))
     app.include_router(create_pipelines_router(project_root))
     app.include_router(create_registry_router(project_root))
     app.include_router(create_validate_router(project_root))
     app.include_router(create_meeting_router(project_root))
+    app.include_router(create_team_templates_router(project_root))
 
     return app

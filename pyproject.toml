@@ -53,8 +53,13 @@ Issues = "https://github.com/aqm-framework/aqm/issues"
 packages = ["aqm"]
 artifacts = ["aqm/schema/*.json"]
 
+# Ship the global team-template skeleton next to the package so
+# aqm/core/team_templates.py can find it after a normal (non-editable) install.
+[tool.hatch.build.targets.wheel.force-include]
+"templates" = "templates"
+
 [tool.hatch.build.targets.sdist]
-include = ["aqm/", "schema/", "docs/", "README.md", "LICENSE", "pyproject.toml"]
+include = ["aqm/", "schema/", "docs/", "templates/", "README.md", "LICENSE", "pyproject.toml"]
 
 [project.scripts]
 aqm = "aqm.cli:cli"

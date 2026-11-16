@@ -36,6 +36,17 @@ def render_meeting() -> str:
     </div>
   </div>
 
+  <div style="margin-top:16px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+    <div class="form-group" style="margin-bottom:0;min-width:240px;">
+      <label>团队模板（全局）</label>
+      <select id="mtTemplate" onchange="applyTeamTemplate(this.value)" style="width:100%;">
+        <option value="">（手动配置）</option>
+      </select>
+    </div>
+    <button class="btn btn-sm" onclick="saveCurrentAsTemplate()">另存为模板</button>
+    <a class="btn btn-sm" href="/team-templates">管理模板</a>
+  </div>
+
   <div style="margin-top:16px;">
     <label style="font-weight:600;font-size:13px;color:var(--text-dim);">参会代理</label>
     <div id="agentList" style="margin-top:8px;"></div>
@@ -386,6 +397,71 @@ async function loadDefaultAgents() {
     data.forEach(a => addAgentRow(a));
     showToast('已加载默认代理配置');
   } catch(e) { showToast('加载失败', 'error'); }
+}
+
+/* ── Global team templates (project independent) ─────────── */
+async function loadTeamTemplates() {
+  const sel = document.getElementById('mtTemplate');
+  if (!sel) return;
+  try {
+    const data = await apiFetch('/api/team-templates');
+    const items = data.items || [];
+    sel.innerHTML = '<option value="">（手动配置）</option>' + items
+      .map(t => `<option value="${escapeValue(t.name)}">${escapeValue(t.name)}（${t.agent_count} 人）</option>`)
+      .join('');
+    if (data.default && items.some(t => t.name === data.default)) {
+      sel.value = data.default;
+      await applyTeamTemplate(data.default);
+    }
+  } catch (e) {
+    // Templates are optional: leave the manual form untouched.
+  }
+}
+
+async function applyTeamTemplate(name) {
+  if (!name) return;
+  try {
+    const data = await apiFetch('/api/team-templates/' + encodeURIComponent(name) + '/agents');
+    const all = data.agents || [];
+    // The meeting form only knows these runtimes; do not silently rewrite
+    // e.g. gemini into claude.
+    const supported = ['claude', 'opencode', 'kilo', 'cline', 'human'];
+    const agents = all.filter(a => supported.includes(a.runtime));
+    if (!agents.length) { showToast('该模板没有会议可用的成员', 'error'); return; }
+    document.getElementById('agentList').innerHTML = '';
+    agents.forEach(a => addAgentRow(a));
+    const skipped = all.length - agents.length;
+    showToast(`已应用模板 ${name}` + (skipped ? `（跳过 ${skipped} 个会议不支持的运行时）` : ''));
+  } catch (e) {
+    showToast('应用模板失败: ' + (e.message || e), 'error');
+  }
+}
+
+async function saveCurrentAsTemplate() {
+  const rows = Array.from(document.querySelectorAll('#agentList > div'));
+  if (!rows.length) { showToast('请先添加成员', 'error'); return; }
+  const name = (prompt('模板名称（字母/数字/点/下划线/短横线）') || '').trim();
+  if (!name) return;
+  const agents = [];
+  const counts = {};
+  rows.forEach(row => {
+    const runtime = row.querySelector('.ag-runtime').value;
+    counts[runtime] = (counts[runtime] || 0) + 1;
+    const id = counts[runtime] === 1 ? runtime : `${runtime}-${counts[runtime]}`;
+    const role = row.querySelector('.ag-role').value.trim();
+    const prompt = row.querySelector('.ag-prompt').value.trim();
+    agents.push({ id, name: role || id, runtime, role, system_prompt: prompt });
+  });
+  try {
+    await apiFetch('/api/team-templates', {
+      method: 'POST',
+      body: JSON.stringify({ name: name, description: '', agents: agents }),
+    });
+    showToast('已保存为全局模板');
+    await loadTeamTemplates();
+  } catch (e) {
+    showToast('保存失败: ' + (e.message || e), 'error');
+  }
 }
 
 /* ── Create & Start ─────────────────────── */
@@ -1577,7 +1653,7 @@ setInterval(() => {
 
 function _initMeetingPage() {
   if (typeof apiFetch === 'function') {
-    loadDefaultAgents();
+    loadDefaultAgents().then(() => loadTeamTemplates());
     refreshMeetingList();
     loadHandoffPipelines();
     const humanInput = document.getElementById('humanSpeech');

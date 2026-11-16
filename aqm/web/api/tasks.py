@@ -562,6 +562,16 @@ def start_pipeline_run(
     finally:
         queue.close()
 
+    # Freeze the members this task was created with.  Later edits to the
+    # pipeline YAML (or to a global team template) never rewrite this file, so
+    # re-opening the task always shows the prompts/roles it actually ran with.
+    try:
+        from aqm.core.team_templates import write_task_snapshot
+
+        write_task_snapshot(get_tasks_dir(project_root) / task.id, agents)
+    except Exception:  # noqa: BLE001 - a snapshot must never block a run
+        logger.warning("Could not write team snapshot for task %s", task.id, exc_info=True)
+
     threading.Thread(
         target=run_pipeline_bg,
         args=(project_root, task, start_agent, None, params, pipeline_name),

@@ -1,0 +1,28 @@
+# Global team template — four members, project independent.
+#
+# system_prompt left empty on purpose: when the template is imported into a
+# meeting or a pipeline the built-in default prompt for the same runtime is
+# filled in.  Edit this file (or use the web UI) to customise the team.
+name: default-4
+description: 默认四成员团队（架构 → 实现 → 界面 → 审核）
+agents:
+  - id: claude
+    name: Claude
+    runtime: claude
+    role: 架构师
+    system_prompt: ""
+  - id: opencode
+    name: opencode
+    runtime: opencode
+    role: 代码实现
+    system_prompt: ""
+  - id: cline
+    name: cline
+    runtime: cline
+    role: UI设计
+    system_prompt: ""
+  - id: kilo
+    name: kilo
+    runtime: kilo
+    role: 审核
+    system_prompt: ""

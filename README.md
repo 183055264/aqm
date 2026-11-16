@@ -313,6 +313,7 @@ aqm serve --port 8000 --host 127.0.0.1
 |---|---|---|
 | `/` | 概览 | 状态统计（含「已暂停」）、最近任务、任务快速创建 |
 | `/meeting` | 会议 | 创建/编辑会议、实时发言、需求文档、转开发任务 |
+| `/team-templates` | 团队模板 | 全局成员库（项目无关），可新建/编辑/删除/设为项目默认 |
 | `/tasks` | 任务 | 列表、筛选、批量停止/删除、流水线列 |
 | `/tasks/{id}` | 任务详情 | 5 个页签（见下） |
 | `/agents` | 代理 | 交接关系图、成员详情 |
@@ -320,7 +321,7 @@ aqm serve --port 8000 --host 127.0.0.1
 | `/registry` | 注册表 | 搜索、拉取、发布、版本 |
 | `/validate` | 校验 | 按 JSON Schema 校验流水线，可开严格模式（警告视为错误） |
 
-左栏顺序：**概览 → 会议 → 任务 → 代理 → 流水线 → 注册表 → 校验**。会议排在任务之前。
+左栏顺序：**概览 → 会议 → 团队模板 → 任务 → 代理 → 流水线 → 注册表 → 校验**。会议排在任务之前。
 
 页面内容区最大 1400px 宽，宽屏下不会拉得过散。
 
@@ -815,6 +816,36 @@ aqm meeting \
 
 ---
 
+## 团队模板（全局成员库，项目无关）
+
+会议和流水线都需要一套成员（id / 运行时 / 角色 / 提示词）。如果每次新建项目都重填一遍会很烦，所以 aqm 提供了**全局团队模板**：
+
+- 存放位置：**软件安装目录**下的 `templates/<名字>.yaml`（随软件走，与项目目录、当前工作目录都无关）。可用环境变量 `AQM_TEMPLATES_DIR` 指向别处。
+- 只保存成员骨架：`id / name / runtime / role / system_prompt`。**提示词留空时**，导入会议/流水线会自动使用该运行时的内置默认提示词。
+- **不保存 handoff**：导入后阶段先后关系仍由你在流水线里手动连。
+- 自带一个 `templates/default-4.yaml`（Claude 架构师 / opencode 实现 / cline UI / kilo 审核），开箱即用。
+
+### 在 Web 控制台里用
+
+1. 侧边栏 **团队模板**：新建、编辑、删除、设为「当前项目默认」。
+2. **会议 → 创建会议**：「团队模板」下拉选中即自动填充成员（仍可当场微调）；「另存为模板」把当前成员存回全局库。
+3. **流水线 → 编辑 → 从团队模板导入**：把模板成员追加进当前流水线，不自动连 handoff。
+4. 项目可以在 `.aqm/config.yaml` 里记一行 `team_template: default-4`，新建会议时自动选中它。
+
+### 快照：改模板不影响已创建的记录
+
+模板只是「新建时的默认填充」。**会议一旦创建，成员配置就固化在 `.aqm/meetings/<id>/meta.json`；任务一旦创建，成员配置就固化在 `.aqm/tasks/<id>/team_snapshot.yaml`。**
+
+因此：
+
+- 修改全局模板 → 只影响以后新建的会议/任务，已有记录不受影响；
+- 修改某个会议/任务的成员 → 只改它自己的快照，不污染模板，也不影响别的项目；
+- 以后重新打开会议/任务，读的是快照，当初调过的提示词和角色一条不丢。
+
+> 模板目录在 git 仓库里，**不要往模板里放 API Key 或任何凭据**（骨架方案天然不含凭据）。
+
+---
+
 ## 示例与演示
 
 仓库里的 [`demo/`](demo/) 是一次真实运行的完整样本，可以直接看效果：
@@ -878,6 +909,9 @@ chunks:
 # Web 服务：重启后自动恢复上次运行中的任务
 server:
   auto_resume: true
+
+# 新建会议时默认选中的全局团队模板（模板本体在软件根目录 templates/）
+team_template: default-4
 ```
 
 环境变量：
@@ -885,6 +919,7 @@ server:
 | 变量 | 作用 |
 |---|---|
 | `AQM_DISABLE_AUTO_RESUME=1` | 关闭服务启动时的任务自动恢复 |
+| `AQM_TEMPLATES_DIR=/path/to/templates` | 覆盖全局团队模板目录（默认是软件安装目录下的 `templates/`） |
 | `AQM_CLAUDE_THINKING_TOKENS=1024` | Claude 思考预算（`0` 关闭）；默认 512，范围 0–32000 |
 | `ANTHROPIC_API_KEY` | Claude 走 API Key 而非 OAuth 登录时使用 |
 
@@ -1180,6 +1215,10 @@ agents:
 | `GET` | `/api/registry/{name}/versions` | 版本列表 |
 | `POST` | `/api/registry/pull` / `publish` | 拉取 / 发布 |
 | `POST` | `/api/validate` | 校验 YAML |
+| `GET` | `/api/team-templates` | 全局团队模板列表（含当前项目默认） |
+| `GET` / `POST` / `PUT` / `DELETE` | `/api/team-templates`、`/api/team-templates/{name}` | 读取 / 新建 / 更新 / 删除模板 |
+| `GET` | `/api/team-templates/{name}/agents` | 展开成员（空提示词用默认填充） |
+| `POST` | `/api/team-templates/default` | 设置当前项目的默认模板 |
 | `GET` / `POST` | `/api/project` / `/api/project/switch` | 当前项目 / 切换 |
 | `POST` | `/api/project/init` | 初始化新项目 |
 | `GET` / `POST` | `/api/project/restart-status` / `/api/project/restart` | 重启状态 / 重启服务 |
@@ -1258,6 +1297,7 @@ aqm/
 │   │   ├── gate_review.py     # 审批事项提取
 │   │   ├── context_file.py    # 上下文存储与裁剪
 │   │   ├── config.py          # .aqm/config.yaml
+│   │   ├── team_templates.py  # 全局团队模板（templates/*.yaml）+ 任务快照
 │   │   ├── validate.py        # Schema 校验
 │   │   └── task.py            # 任务与状态
 │   ├── runtime/
@@ -1270,9 +1310,10 @@ aqm/
 │   └── web/
 │       ├── app.py             # FastAPI 入口
 │       ├── templates.py       # 布局、CSS、徽章
-│       ├── api/               # tasks / meeting / pipelines / registry / validate / sse
-│       └── pages/             # 概览 / 任务 / 详情 / 会议 / 代理 / 流水线 / 注册表 / 校验
+│       ├── api/               # tasks / meeting / pipelines / registry / validate / team_templates / sse
+│       └── pages/             # 概览 / 任务 / 详情 / 会议 / 团队模板 / 代理 / 流水线 / 注册表 / 校验
 ├── schema/agents-schema.json  # 流水线 JSON Schema
+├── templates/                 # 全局团队模板（项目无关，随软件分发）
 ├── docs/                      # concepts.md / spec.md
 └── tests/                     # pytest
 ```

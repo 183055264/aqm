@@ -71,13 +71,13 @@ class TestHTMLPages:
     def test_dashboard(self, client):
         r = client.get("/")
         assert r.status_code == 200
-        assert "Dashboard" in r.text
+        assert "概览" in r.text
         assert "sidebar" in r.text  # new sidebar layout
 
     def test_agents_page(self, client):
         r = client.get("/agents")
         assert r.status_code == 200
-        assert "Agent Pipeline" in r.text
+        assert "代理流水线" in r.text
 
     def test_pipelines_page(self, client):
         r = client.get("/pipelines")
@@ -214,7 +214,7 @@ class TestHTMLPages:
     def test_registry_page(self, client):
         r = client.get("/registry")
         assert r.status_code == 200
-        assert "Registry" in r.text
+        assert "流水线注册表" in r.text
 
     def test_validate_page(self, client):
         r = client.get("/validate")

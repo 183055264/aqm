@@ -135,6 +135,14 @@ def render_pipelines(
 
   <!-- Visual Editor Panel -->
   <div id="panelVisual" style="margin-top:16px;">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+      <label style="font-size:13px;color:var(--text-dim);">从团队模板导入：</label>
+      <select id="pipelineTemplateSelect" style="min-width:200px;">
+        <option value="">（选择模板）</option>
+      </select>
+      <button class="btn btn-sm" onclick="importTeamTemplate()">导入成员</button>
+      <a class="btn btn-sm" href="/team-templates" target="_blank">管理模板</a>
+    </div>
     <div id="agentCards">
       <div style="text-align:center;color:var(--text-dim);padding:24px;">加载代理中...</div>
     </div>
@@ -971,8 +979,68 @@ async function setDefault(name) {{
   }} catch(e) {{}}
 }}
 
+/* ── Global team templates ─────────────────── */
+async function loadTeamTemplateOptions() {{
+  const sel = document.getElementById('pipelineTemplateSelect');
+  if (!EDIT_PIPELINE || !sel) return;
+  try {{
+    const data = await apiFetch('/api/team-templates');
+    (data.items || []).forEach(t => {{
+      const opt = document.createElement('option');
+      opt.value = t.name;
+      opt.textContent = t.name + '（' + (t.agent_count || 0) + ' 人）';
+      sel.appendChild(opt);
+    }});
+  }} catch(e) {{ /* templates are optional */ }}
+}}
+
+async function importTeamTemplate() {{
+  const sel = document.getElementById('pipelineTemplateSelect');
+  if (!EDIT_PIPELINE || !sel || !sel.value) {{
+    showToast('请先选择团队模板', 'error');
+    return;
+  }}
+  try {{
+    const data = await apiFetch(
+      '/api/team-templates/' + encodeURIComponent(sel.value) + '/agents'
+    );
+    const existing = new Set(PIPELINE_AGENTS.map(a => a.id));
+    let added = 0;
+    let skipped = 0;
+    for (const a of (data.agents || [])) {{
+      if (existing.has(a.id)) {{ skipped += 1; continue; }}
+      await apiFetch(
+        '/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/agents',
+        {{
+          method: 'POST',
+          body: JSON.stringify({{
+            id: a.id,
+            name: a.name || a.id,
+            runtime: a.runtime,
+            model: a.model || null,
+            system_prompt: a.system_prompt || '',
+            type: 'agent',
+            handoffs: [],
+          }}),
+        }}
+      );
+      added += 1;
+    }}
+    showToast(
+      '已导入 ' + added + ' 个成员' +
+      (skipped ? '，跳过 ' + skipped + ' 个同名成员' : '')
+    );
+    await loadAgentCards();
+  }} catch(e) {{
+    showToast('导入失败: ' + (e.message || e), 'error');
+  }}
+}}
+
 /* Init: load agent cards if editing */
-if (EDIT_PIPELINE) setTimeout(loadAgentCards, 50);
+if (EDIT_PIPELINE) {{
+  setTimeout(loadAgentCards, 50);
+  setTimeout(loadTeamTemplateOptions, 60);
+}}
 </script>"""
 
     body = (

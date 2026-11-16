@@ -41,6 +41,10 @@ class ProjectConfig:
     timeouts: RuntimeTimeouts = field(default_factory=RuntimeTimeouts)
     # Work-block (chunk) decomposition settings, see aqm.core.chunks.
     chunks: dict = field(default_factory=dict)
+    # Which global team template (.aqm templates/<name>.yaml) this project uses
+    # by default for new meetings.  The members themselves are never copied
+    # here: templates are global, project records keep their own snapshot.
+    team_template: str | None = None
     # Web-server behaviour.  ``auto_resume`` (default true) restarts tasks that
     # were running when the server stopped.
     server: dict = field(default_factory=lambda: {"auto_resume": True})
@@ -150,6 +154,7 @@ def load_project_config(root: Path) -> ProjectConfig:
             deliverable_naming=data.get("deliverable_naming") or "auto",
             chunks=data.get("chunks") or {},
             server=data.get("server") or {"auto_resume": True},
+            team_template=data.get("team_template"),
         )
     except (yaml.YAMLError, OSError) as e:
         logger.warning("Failed to load project config: %s", e)
@@ -173,6 +178,8 @@ def save_project_config(root: Path, config: ProjectConfig) -> None:
         data["deliverable_naming"] = config.deliverable_naming
     if config.chunks:
         data["chunks"] = config.chunks
+    if config.team_template:
+        data["team_template"] = config.team_template
     config_file.write_text(
         yaml.dump(data, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",

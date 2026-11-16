@@ -570,7 +570,7 @@ function hideProjectSwitch() {
   document.getElementById('projectSwitchModal')?.classList.remove('show');
 }
 // Restart status polling
-function pollRestartStatus(interval, maxAttempts) {
+function pollRestartStatus(interval, maxAttempts, nextPath = null) {
   let attempts = 0;
   let previousPid = null;
   let reloading = false;
@@ -619,7 +619,7 @@ function pollRestartStatus(interval, maxAttempts) {
         } else {
           showToast('服务器重启成功，正在刷新页面...', 'success');
         }
-        reloadWhenNewServerReady(targetPath);
+        reloadWhenNewServerReady(targetPath || nextPath);
       } else if (data.status === 'failed') {
         clearInterval(timer);
         const detail = data.detail || '未知错误';
@@ -687,6 +687,38 @@ async function restartTaskInProject(taskId, projectDir, fromStage, note) {
   setTimeout(() => {
     location.href = '/tasks/' + encodeURIComponent(taskId) + '#output';
   }, 600);
+}
+
+/**
+ * Switch the whole console to another project and restart the server.
+ * `nextPath` is where to land once the new server answers (optional).
+ */
+async function switchConsoleTo(projectDir, nextPath) {
+  if (!projectDir) return;
+  if (!confirm(
+    '切换控制台到项目：\\n' + projectDir + '\\n\\n' +
+    '服务器会重启，当前页面的实时输出连接会中断。是否继续？'
+  )) return;
+  try {
+    const switchResponse = await fetch('/api/project/switch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: projectDir}),
+    });
+    const switchData = await switchResponse.json().catch(() => ({}));
+    if (!switchResponse.ok) throw new Error(switchData.detail || '项目切换失败');
+    const restartResponse = await fetch('/api/project/restart', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: projectDir}),
+    });
+    const restartData = await restartResponse.json().catch(() => ({}));
+    if (!restartResponse.ok) throw new Error(restartData.detail || '服务器重启失败');
+    showToast('正在切换项目并重启服务器...', 'info');
+    pollRestartStatus(2000, 30, nextPath || null);
+  } catch (e) {
+    showToast(e.message || '切换失败', 'error');
+  }
 }
 
 async function resumePendingTaskRestart() {

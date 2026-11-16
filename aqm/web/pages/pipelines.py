@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from aqm.web.templates import esc, layout
 
 
@@ -46,10 +48,14 @@ def render_pipelines(
                 name_cell = (
                     f'{esc(name)} <span style="font-size:11px;color:var(--text-dim);">只读</span>'
                 )
+                # Switch the whole console to the owning project (it restarts
+                # the server), then open this pipeline's editor there.
+                js_path = esc(json.dumps(str(project_path)))
+                js_next = esc(json.dumps(f"/pipelines?edit={name}"))
                 actions = (
-                    '<span style="font-size:12px;color:var(--text-dim);" '
-                    'title="该流水线属于其他项目，请切换到该项目的控制台编辑">'
-                    '在所属项目编辑</span>'
+                    f'<button class="btn btn-sm" '
+                    f'title="把控制台切换到 {esc(project_path)} 并打开该流水线" '
+                    f'onclick="switchConsoleTo({js_path}, {js_next})">切换控制台</button>'
                 )
             rows.append(f"""\
 <tr>

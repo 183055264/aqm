@@ -1555,4 +1555,7 @@ def test_render_pipelines_labels_other_projects():
     assert "proj-b" in html and "只读" in html
     # A foreign pipeline must not link to the current project's editor.
     assert 'href="/pipelines?edit=research"' not in html
-    assert "在所属项目编辑" in html
+    # Instead it offers a one-click console switch to the owning project,
+    # passing the Windows path as a properly escaped JS string literal.
+    assert "切换控制台" in html
+    assert 'switchConsoleTo(&quot;E:\\\\proj-b&quot;, &quot;/pipelines?edit=research&quot;)' in html

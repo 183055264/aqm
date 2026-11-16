@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "generated_from": "<demo-project>\\.aqm\\meetings\\dd7e208a\\REQUIREMENTS.md",
+  "source_hash": "fa8f2a82b4b9bbbd6dee6b7cb2d59855a6ca9667",
+  "splitter_model": "claude",
+  "auto_split_at": "2026-11-13T06:58:46.102810+00:00",
+  "chunks": [
+    {
+      "id": "C-001",
+      "description": "前置裁决与 per-agent 完成态落盘契约定稿",
+      "status": "done",
+      "owner": "claude",
+      "phase": "需求",
+      "note": "作为流水线第一块，先定稿阻塞项 Q1：写侧把 agent × round 完成矩阵落到 `meta.json`（或新增契约文件），使 snapshot_round 与「剔除最后一个未完成整轮」可计算；若选 (b) 方案，则约定 manifest 诚实写 `complete_rounds: unknown`，绝不出猜测数。同步裁决 Q2（failed agent 停在轮中时半截 output 是否入快照）、Q3（三类产物是进程内状态还是已落盘，决定 FR-01 取数方式）、Q4（轮次命名+覆盖 vs 时间命名）、Q8（渲染层是否对 rounds/current_round 做一次性归一化）、Q9（AC-03 凭据模式清单待补项）。并在此块定稿 manifest 字段契约：`complete_rounds` 取值域、`completeness: {kinds_present, kinds_missing}`、`path_mode` + `project_dir_slug`、`source_store: unredacted` 告警，以及哈希的适用域（NFR-02）。边界：本轮不整改写侧 rounds/current_round 语义重叠，不建设阶段输出/工作块/审批的存储契约本身（只以 NullSource 降级接入）。依赖：无。",
+      "source": "auto",
+      "created_by": "chunk_planner",
+      "completed_by": "claude",
+      "created_at": "2026-11-13T06:58:46.061631Z",
+      "updated_at": "2026-11-13T06:59:57.874832Z"
+    },
+    {
+      "id": "C-002",
+      "description": "产物视图层 TaskArtifact 抽象与快照采集管线",
+      "status": "done",
+      "owner": "opencode",
+      "phase": "实现",
+      "note": "实现 FR-01 统一只读视图 `{kind, task_id, seq, started_at, finished_at, content_ref, hash}` 与四类产物同一接口 `load(taskId) -> Artifact[]`，导出器禁止直接读死 `.aqm/xxx` 路径；FR-02 采集阶段一次性 `read_bytes` + 每源 sha256 入 manifest，此后所有渲染只读内存 buffer、中途不碰磁盘，并把「截至第 N 轮的快照」语义写入元信息；FR-03 三纯函数 `collect` / `render`(生成器按节 yield) / `write_stream` 与双 sink，单文件与「目录归档 + index.md + NN-*.md」均为 write_stream 的消费者；FR-04 `--dry-run` 实现为 `write_stream(it, NullSink())` 后打印 manifest，不另开渲染路径；FR-05 退出码 0/2/3/4；FR-10 阶段输出/工作块/审批各配 NullSource 返回 `[]` 并写 `{kind, status: source_unavailable, reason: no_storage_contract}`；FR-12 只加一个 `scope` 参数支持节级；FR-16 成功必须输出 manifest；FR-38 `generated_at` 来自参数或可注入 clock；FR-37 默认路径零 LLM 调用。边界：不实现章节样式、脱敏与写盘细节（见第三、四块）。依赖：第一块的契约与字段裁决。",
+      "source": "auto",
+      "created_by": "chunk_planner",
+      "completed_by": "opencode",
+      "created_at": "2026-11-13T06:58:46.066885Z",
+      "updated_at": "2026-11-16T03:25:33.518160Z"
+    },
+    {
+      "id": "C-003",
+      "description": "去重、漂移检测与逐轮结构解析",
+      "status": "done",
+      "owner": "opencode",
+      "phase": "实现",
+      "note": "实现三件读侧语义：FR-06 `meeting.md` 为逐轮发言权威源、`meta.json.agents[].output` 仅在其缺失或截断时作 fallback，manifest 记 `output_source: meeting|meta_fallback`，禁止「渲染一遍 meta.json 再贴一遍 meeting.md」；FR-07 用块首行 + 块末 32 字符对 meeting.md 对应段落做双端比对（不采用单一 64 字符前缀），不一致记 `drift: true`、fallback 触发记 `fallback_reason: truncated`；FR-08 逐轮结构只从 meeting.md 标题解析，正则 `^### (.+?) \\(([A-Za-z0-9_-]+)\\) - 第(\\d+)轮$`，名字段非贪婪不跨行、id 段限定字符集，扫描起点为第一个 `\\n---\\n` 之后以免误吞议题正文；FR-09 解析失败不抛异常，退化为「整篇作为单节附录」并记 `structure: degraded`；FR-18 `--max-chars` 截断粒度为 agent 块，超长只保留首 N 行并插 `… [truncated N chars]`，不得在块内硬切。边界：不改动渲染布局与脱敏（第四块）；`degraded` / `drift` 状态须暴露供 UI 首屏消费（第五块）。依赖：第二块的内存 buffer 与 snapshot 语义。",
+      "source": "auto",
+      "created_by": "chunk_planner",
+      "completed_by": "opencode",
+      "created_at": "2026-11-13T06:58:46.082691Z",
+      "updated_at": "2026-11-16T03:25:33.525323Z"
+    },
+    {
+      "id": "C-004",
+      "description": "文档形态渲染、脱敏管线与原子写盘",
+      "status": "done",
+      "owner": "opencode",
+      "phase": "实现",
+      "note": "产出最终文本与文件：FR-13 一级标题=任务名+快照轮次、二级=四大节、三级=第 N 轮，发言用 `> **claude**（role）` 引用块、块首行 emoji 状态徽章（✓/⏳/✗，不用颜色）、轮次间 `---` 与 FR-08 复用同一边界规则；FR-14 `[_TOC_]` + 目录归档模式 index.md 即导航首页；FR-15 头部机器可读版本块 `aqm/export@1`、`schema_version`、`task_id`、`snapshot_round`、`generated_at` 与各节字节数+sha256；FR-11 `completeness` 机器可读 + `[PARTIAL: approvals, stage_output]` 同时进文件名/一级标题；FR-19 仅允许白名单键外发（排除 `system_prompt`、`thinking`、`actions` 全量、`project_dir`）；FR-20 `thinking` 默认整段丢弃、保留须 `--include-thinking`；FR-21 `--path-mode relative|hash|drop` 默认 relative；FR-22 sha256 在脱敏后计算且哈希行不自参与；FR-23 manifest 携带 `source_store: unredacted, path: .aqm/...`；FR-33 `dest + f\".{os.getpid()}.tmp\"` → flush → `os.replace`；FR-34 PermissionError 退避重试 3 次后报错且不残留 tmp；FR-35 UTF-8 无 BOM、`\\n`、末尾单换行；FR-36 任务名 slug 化限长 80；NFR-02 归一化后字节稳定；NFR-06 跨端只用层级/引用块/emoji+文本双编码。依赖：第二、三块。边界：不含 UI 与测试块。",
+      "source": "auto",
+      "created_by": "chunk_planner",
+      "completed_by": "opencode",
+      "created_at": "2026-11-13T06:58:46.087574Z",
+      "updated_at": "2026-11-16T03:25:33.532157Z"
+    },
+    {
+      "id": "C-005",
+      "description": "导出界面与交互：双入口、分享安全体检首屏与结果面板",
+      "status": "done",
+      "owner": "cline",
+      "phase": "界面",
+      "note": "FR-24 任务详情页右上角「导出」主入口 + 四个 tab 头部「导出本节」次级入口，不得只给全量入口；FR-25 对话框打开即做一次 dry-run 扫描并展示各节状态（如「会议记录 12 节 ✓ / 阶段输出 0 节·无数据 / 审批 0 节·未落盘」）与将脱敏项统计、以及 `--include-thinking` / `--path-mode` 等可开关项，用户确认后才真正生成；FR-26 `structure: degraded`、`drift: true`、`source_unavailable` 以红字/醒目形式上首屏，不得只落 manifest；FR-27 无数据节在预览显示灰色「0 节·尚无存储契约」、在 Markdown 渲染为灰色引用块 `> 本节无数据：approvals 尚未落盘`，禁止 UI 说 0 节而整节消失；FR-28 结果面板展示 slug+时间戳文件名、各节字节数与 sha256 小表、「复制链接（`aq<path><task_id>/<snapshot_round>`）/ 在文件夹中显示 / 再次导出」；FR-29 超过 2–3 秒显示按节进度，消费第二块生成器，100% 必须绑定在 `os.replace` 成功之后；FR-30 预览区直接消费 `render(snapshot, opts)` 生成器前 200 行 + 「…共 14 节 480KB」，不得另写 Markdown 渲染器；FR-31 任务详情页「导出记录」折叠区（文件名、快照轮次、大小、脱敏数、时间，可重下/删除，历史存元信息而文件按轮次覆盖）；FR-32 `E` 快捷键、Enter 打开、Tab 走完选项、Esc 关闭、徽章配 `aria-label`、emoji+文本双编码、焦点陷阱不被困住。依赖：第二块生成器与 manifest、第三块状态字段、第四块产物。边界：不实现渲染器本体。",
+      "source": "auto",
+      "created_by": "chunk_planner",
+      "completed_by": "cline",
+      "created_at": "2026-11-13T06:58:46.092491Z",
+      "updated_at": "2026-11-16T03:27:04.468455Z"
+    },
+    {
+      "id": "C-006",
+      "description": "验收测试与放行评审",
+      "status": "done",
+      "owner": "kilo",
+      "phase": "评审",
+      "note": "按 AC-01 golden 测试（同 fixture 两次导出除 `generated_at` 外字节一致，且在路径归一化后仍成立，对应 NFR-02）；AC-02 三类 fixture（已完成任务、进行中任务、缺 `meeting.md` 的任务）跑绿；AC-03 断言产物不含 `[A-Z]:\\\\`、`/home/`、`sk-`、`ghp_`、`AKIA`，并补 Q9 清单缺口；AC-04 九项负例矩阵全部跑绿，其中第 1、4、7、9 项为 AC-07 放行门槛，第 8 项并发 last-writer-wins 竞态与第 9 项「用户正在读」的外部锁须给出 Q7 的处置结论；AC-06 可访问性 QA；AC-07 逐项核对（Q1 有源或诚实 `unknown`、FR-11 机器可读 + 可见 PARTIAL 双通道、四项负例与 golden 测试成立）。同时按 NFR-03 做安全控制级评审措辞审查：脱敏完成不得表述为「系统已安全」，产物须显式声明 `source_store: unredacted`。输出风险与验收清单及可直接交付的中文 Markdown 结论摘要，未满足门槛给出阻断结论。依赖：前五块全部完成。",
+      "source": "auto",
+      "created_by": "chunk_planner",
+      "completed_by": "kilo",
+      "created_at": "2026-11-13T06:58:46.097602Z",
+      "updated_at": "2026-11-16T03:27:41.802533Z"
+    }
+  ]
+}

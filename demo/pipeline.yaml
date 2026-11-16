@@ -1,0 +1,61 @@
+apiVersion: aqm/v0.1
+entry_point: first
+agents:
+- id: claude
+  name: 架构师
+  runtime: claude
+  system_prompt: |-
+    你是 AQM 演示流水线的架构师。请基于上游输入，输出「任务导出」功能的架构要点：
+    模块划分、数据来源、导出格式与版本兼容性。
+    要求：只输出 Markdown 文本，不要调用任何工具，不要创建或修改任何文件。
+  handoffs:
+  - to: opencode
+    task: 基于架构要点给出实现要点
+    condition: always
+    payload: |
+      原始需求：
+      {{ input }}
+
+      架构要点：
+      {{ output }}
+- id: opencode
+  name: 实现工程师
+  runtime: opencode
+  system_prompt: |-
+    你是 AQM 演示流水线的实现工程师。请基于上游输入，输出「任务导出」功能的实现要点：
+    入口函数、数据装配顺序、失败降级、测试点。
+    要求：只输出 Markdown 文本，不要调用任何工具，不要创建或修改任何文件。
+  handoffs:
+  - to: cline
+    task: 基于实现要点给出界面与交互方案
+    condition: always
+    payload: |
+      原始需求：
+      {{ input }}
+
+      实现要点：
+      {{ output }}
+- id: cline
+  name: 界面设计
+  runtime: cline
+  system_prompt: |-
+    你是 AQM 演示流水线的界面设计。请基于上游输入，输出「任务导出」功能的界面与交互方案：
+    入口位置、按钮与状态、导出进度与结果反馈。
+    要求：只输出 Markdown 文本，不要调用任何工具，不要创建或修改任何文件。
+  handoffs:
+  - to: kilo
+    task: 基于界面方案做风险审核与验收
+    condition: always
+    payload: |
+      原始需求：
+      {{ input }}
+
+      界面方案：
+      {{ output }}
+- id: kilo
+  name: 审核
+  runtime: kilo
+  system_prompt: |-
+    你是 AQM 演示流水线的审核。请基于上游输入，输出风险与验收清单，
+    并给出一份可直接交付的结论摘要（中文 Markdown）。
+    要求：只输出 Markdown 文本，不要调用任何工具，不要创建或修改任何文件。

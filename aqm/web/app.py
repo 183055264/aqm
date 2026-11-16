@@ -228,28 +228,62 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
     @app.get("/pipelines", response_class=HTMLResponse)
     async def pipelines_page(edit: str | None = None):
         from aqm.web.pages.pipelines import render_pipelines
-        from aqm.web.api.pipelines import CreatePipelineRequest
-        pipelines_list = list_pipelines(project_root)
+        from aqm.web.task_projects import project_roots
+
+        current_root = project_root.resolve()
         default = get_default_pipeline(project_root) or "default"
         pip_data = []
-        for name in pipelines_list:
+        # Show pipelines from every project this console knows about, not just
+        # the one it currently serves.  Rows from other projects are read-only:
+        # the edit/delete APIs always operate on the current project.
+        for root in project_roots(project_root):
             try:
-                path = get_pipeline_path(project_root, name)
-                content = path.read_text(encoding="utf-8")
-                agent_count = content.count("- id:")
-                pip_data.append({"name": name, "agent_count": agent_count, "is_default": name == default})
-            except FileNotFoundError:
-                pip_data.append({"name": name, "agent_count": 0, "is_default": name == default})
+                names = list_pipelines(root)
+            except Exception:  # noqa: BLE001 - a broken project must not hide others
+                names = []
+            root_default = get_default_pipeline(root) or "default"
+            is_current = root == current_root
+            for name in names:
+                try:
+                    path = get_pipeline_path(root, name)
+                    content = path.read_text(encoding="utf-8")
+                    agent_count = content.count("- id:")
+                except (FileNotFoundError, OSError, ValueError):
+                    agent_count = 0
+                pip_data.append({
+                    "name": name,
+                    "agent_count": agent_count,
+                    "is_default": name == root_default,
+                    "project": str(root),
+                    "project_name": root.name or str(root),
+                    "is_current": is_current,
+                })
 
         edit_content = None
+        edit_project = None
         if edit:
             try:
                 path = get_pipeline_path(project_root, edit)
                 edit_content = path.read_text(encoding="utf-8")
             except FileNotFoundError:
-                pass
+                # Not ours: tell the user which project actually owns it.
+                from aqm.core.project import get_pipeline_path as _gpp
 
-        return render_pipelines(pip_data, default, edit_name=edit, edit_content=edit_content)
+                for root in project_roots(project_root):
+                    try:
+                        _gpp(root, edit).read_text(encoding="utf-8")
+                    except (FileNotFoundError, OSError, ValueError):
+                        continue
+                    edit_project = str(root)
+                    break
+
+        return render_pipelines(
+            pip_data,
+            default,
+            edit_name=edit,
+            edit_content=edit_content,
+            edit_project=edit_project,
+        )
 
     @app.get("/tasks/{task_id}", response_class=HTMLResponse)
     async def task_detail(task_id: str):

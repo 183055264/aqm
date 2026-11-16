@@ -10,19 +10,23 @@ def render_pipelines(
     current_default: str,
     edit_name: str | None = None,
     edit_content: str | None = None,
+    edit_project: str | None = None,
 ) -> str:
     # Pipeline table
     if pipelines:
         rows = []
         for p in pipelines:
             name = p["name"]
+            is_current = p.get("is_current", True)
             default_badge = '<span class="badge badge-completed">default</span>' if p.get("is_default") else ""
-            rows.append(f"""\
-<tr>
-  <td><a href="/pipelines?edit={esc(name)}">{esc(name)}</a></td>
-  <td>{p.get('agent_count', 0)}</td>
-  <td>{default_badge}</td>
-  <td>
+            project_name = p.get("project_name") or ""
+            project_path = p.get("project") or ""
+            if is_current:
+                project_cell = (
+                    '<span class="badge badge-completed">当前项目</span>'
+                )
+                name_cell = f'<a href="/pipelines?edit={esc(name)}">{esc(name)}</a>'
+                actions = f"""\
     <div class="dropdown">
       <button class="btn btn-sm" onclick="toggleDropdown(this)">操作</button>
       <div class="dropdown-menu">
@@ -33,13 +37,32 @@ def render_pipelines(
         <div class="divider"></div>
         <button class="danger" onclick="deletePipeline('{esc(name)}')">删除</button>
       </div>
-    </div>
-  </td>
+    </div>"""
+            else:
+                project_cell = (
+                    f'<span title="{esc(project_path)}">{esc(project_name)}</span>'
+                    f'<div style="font-size:11px;color:var(--text-dim);">{esc(project_path)}</div>'
+                )
+                name_cell = (
+                    f'{esc(name)} <span style="font-size:11px;color:var(--text-dim);">只读</span>'
+                )
+                actions = (
+                    '<span style="font-size:12px;color:var(--text-dim);" '
+                    'title="该流水线属于其他项目，请切换到该项目的控制台编辑">'
+                    '在所属项目编辑</span>'
+                )
+            rows.append(f"""\
+<tr>
+  <td>{name_cell}</td>
+  <td>{p.get('agent_count', 0)}</td>
+  <td>{default_badge}</td>
+  <td>{project_cell}</td>
+  <td>{actions}</td>
 </tr>""")
         table = f"""\
 <div class="table-wrap">
 <table>
-  <thead><tr><th>名称</th><th>代理数</th><th>状态</th><th>操作</th></tr></thead>
+  <thead><tr><th>名称</th><th>代理数</th><th>状态</th><th>项目</th><th>操作</th></tr></thead>
   <tbody>{"".join(rows)}</tbody>
 </table>
 </div>"""
@@ -74,12 +97,17 @@ def render_pipelines(
         # The URL points at a pipeline this project does not have. Say so
         # instead of silently showing only the list: the link usually comes
         # from a task that belongs to another project's console.
+        owner_hint = (
+            f"它属于项目 <code>{esc(edit_project)}</code>，请切换到该项目的控制台编辑。"
+            if edit_project
+            else "当前项目里没有它，也不在其他已知项目中。"
+        )
         editor_section = f"""\
 <div class="card" style="border-color:var(--orange);">
   <h3 style="color:var(--orange);">流水线 '{esc(edit_name)}' 不在当前项目</h3>
   <p style="font-size:13px;">
-    当前项目的 <code>.aqm/pipelines/</code> 下没有 <code>{esc(edit_name)}.yaml</code>，所以无法编辑。
-    如果这条流水线属于另一个项目（例如某个任务的来源项目），请切换到该项目的控制台；
+    当前项目的 <code>.aqm/pipelines/</code> 下没有 <code>{esc(edit_name)}.yaml</code>，所以这里无法编辑。
+    {owner_hint}
     也可以在下方列表中选择已有流水线，或新建一个。
   </p>
   <a class="btn btn-sm" href="/pipelines">返回流水线列表</a>

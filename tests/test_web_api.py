@@ -82,13 +82,13 @@ class TestHTMLPages:
     def test_pipelines_page(self, client):
         r = client.get("/pipelines")
         assert r.status_code == 200
-        assert "Pipelines" in r.text
+        assert "流水线" in r.text
         assert "default" in r.text
 
     def test_pipelines_edit(self, client):
         r = client.get("/pipelines?edit=default")
         assert r.status_code == 200
-        assert "Editing: default" in r.text
+        assert "编辑: default" in r.text
         assert "yamlEditor" in r.text
 
     def test_pipelines_missing_edit_shows_explanation(self, client):
@@ -1524,3 +1524,35 @@ class TestAutoResume:
             client.app.state.project_root, [task_id], 0,
         )
         assert calls == [True]
+
+
+def test_render_pipelines_labels_other_projects():
+    """The list shows every known project's pipelines, current one editable."""
+    from aqm.web.pages.pipelines import render_pipelines
+
+    html = render_pipelines(
+        [
+            {
+                "name": "demo",
+                "agent_count": 4,
+                "is_default": True,
+                "project": r"D:\proj-a",
+                "project_name": "proj-a",
+                "is_current": True,
+            },
+            {
+                "name": "research",
+                "agent_count": 2,
+                "is_default": False,
+                "project": r"E:\proj-b",
+                "project_name": "proj-b",
+                "is_current": False,
+            },
+        ],
+        "demo",
+    )
+    assert "当前项目" in html
+    assert "proj-b" in html and "只读" in html
+    # A foreign pipeline must not link to the current project's editor.
+    assert 'href="/pipelines?edit=research"' not in html
+    assert "在所属项目编辑" in html

@@ -69,7 +69,22 @@ def render_pipelines(
 
     # Editor section (Visual + YAML tabs)
     editor_section = ""
-    if edit_name and edit_content is not None:
+    editor_available = bool(edit_name and edit_content is not None)
+    if edit_name and edit_content is None:
+        # The URL points at a pipeline this project does not have. Say so
+        # instead of silently showing only the list: the link usually comes
+        # from a task that belongs to another project's console.
+        editor_section = f"""\
+<div class="card" style="border-color:var(--orange);">
+  <h3 style="color:var(--orange);">流水线 '{esc(edit_name)}' 不在当前项目</h3>
+  <p style="font-size:13px;">
+    当前项目的 <code>.aqm/pipelines/</code> 下没有 <code>{esc(edit_name)}.yaml</code>，所以无法编辑。
+    如果这条流水线属于另一个项目（例如某个任务的来源项目），请切换到该项目的控制台；
+    也可以在下方列表中选择已有流水线，或新建一个。
+  </p>
+  <a class="btn btn-sm" href="/pipelines">返回流水线列表</a>
+</div>"""
+    elif edit_name and edit_content is not None:
         editor_section = f"""\
 <div class="card" style="border-color:var(--accent);">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -266,7 +281,7 @@ def render_pipelines(
 
     js = f"""\
 <script>
-const EDIT_PIPELINE = {f"'{esc(edit_name)}'" if edit_name else "null"};
+const EDIT_PIPELINE = {f"'{esc(edit_name)}'" if editor_available else "null"};
 let currentTab = 'visual';
 let editingAgentId = null;
 let EDITING_AGENT = null;
@@ -301,12 +316,17 @@ async function loadAgentCards() {{
     PIPELINE_AGENTS = Array.isArray(agents) ? agents : [];
     renderAgentCards(agents);
   }} catch(e) {{
-    document.getElementById('agentCards').innerHTML = '<div style="color:var(--red);padding:12px;">加载代理失败</div>';
+    const box = document.getElementById('agentCards');
+    if (box) {{
+      box.innerHTML = '<div style="color:var(--red);padding:12px;">加载代理失败：' +
+        String(e && e.message || e).replace(/</g, '&lt;') + '</div>';
+    }}
   }}
 }}
 
 function renderAgentCards(agents) {{
   const container = document.getElementById('agentCards');
+  if (!container) return;
   if (!agents.length) {{
     container.innerHTML = '<div class="empty-state" style="padding:24px;"><div class="title">暂无代理</div><div class="desc">添加第一个代理来开始使用。</div></div>';
     return;

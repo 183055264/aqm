@@ -91,6 +91,15 @@ class TestHTMLPages:
         assert "Editing: default" in r.text
         assert "yamlEditor" in r.text
 
+    def test_pipelines_missing_edit_shows_explanation(self, client):
+        # A link from a task that belongs to another project must not render an
+        # editor that then 404s and throws in JS.
+        r = client.get("/pipelines?edit=from-another-project")
+        assert r.status_code == 200
+        assert "不在当前项目" in r.text
+        assert "const EDIT_PIPELINE = null" in r.text
+        assert 'id="agentCards"' not in r.text
+
     def test_task_detail(self, client):
         # Create a task first
         r = client.post("/api/tasks", json={"description": "Test task"})

@@ -195,10 +195,31 @@ def render_task_detail(
 
     # ── Meta card ─────────────────────────────────────────────────────
     pipeline_name = (task.metadata or {}).get("pipeline") or ""
-    if pipeline_name:
+
+    def _pipeline_in_current_project(name: str) -> bool:
+        """True when the console's own project has this pipeline YAML."""
+        if not current_project_dir:
+            return True
+        try:
+            from aqm.core.project import get_pipeline_path
+
+            get_pipeline_path(Path(current_project_dir), name)
+            return True
+        except Exception:  # noqa: BLE001 - any failure means "not editable here"
+            return False
+
+    if pipeline_name and _pipeline_in_current_project(pipeline_name):
         pipeline_html = (
             f'<a href="/pipelines?edit={esc(pipeline_name)}" '
             f'title="查看流水线 {esc(pipeline_name)}">{esc(pipeline_name)}</a>'
+        )
+    elif pipeline_name:
+        # The task belongs to another project: this console has no such
+        # pipeline, so linking to the editor would only produce a 404.
+        pipeline_html = (
+            f'<span title="该流水线位于任务所属项目，当前控制台的项目里没有它">'
+            f'{esc(pipeline_name)} <span style="font-size:11px;color:var(--text-dim);">'
+            f"（其他项目）</span></span>"
         )
     else:
         pipeline_html = (

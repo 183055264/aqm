@@ -1056,6 +1056,60 @@ document.addEventListener('DOMContentLoaded', loadChunks);
     }} catch (err) {{}}
   }}, 5000);
 }})();
+
+// A task that belongs to another project runs in that project's own aqm
+// process, so there is no SSE stream to subscribe to here.  Poll the on-disk
+// snapshot instead: keep the status badge fresh in place, and reload when a
+// new stage is persisted or the task leaves the "running" set.  Reloading on
+// every status flip would loop forever for a paused task, because the DB keeps
+// "in_progress" while paused.
+(function pollRemoteTask() {{
+  if (LIVE_RENDERED) return;
+  const REMOTE_STATES = ['in_progress', 'awaiting_gate', 'awaiting_human_input'];
+  if (!REMOTE_STATES.includes(TASK_STATUS)) return;
+  const RELOAD_STATES = ['completed', 'failed', 'cancelled', 'pending', 'stalled'];
+  const LABELS = {{
+    in_progress: '运行中', paused: '已暂停', awaiting_gate: '等待审批',
+    awaiting_human_input: '等待输入', completed: '已完成', failed: '失败',
+    cancelled: '已取消', stalled: '停滞',
+  }};
+  const statusEl = document.getElementById('remoteStatusBadge');
+  const updatedEl = document.getElementById('remoteUpdated');
+  const knownStages = {len(task.stages)};
+  const knownAgent = {json.dumps(task.current_agent_id or "")};
+  let tries = 0;
+  const timer = setInterval(async () => {{
+    tries += 1;
+    if (tries > 3600) {{ clearInterval(timer); return; }}  // ~5h
+    try {{
+      const res = await fetch(
+        '/api/tasks/' + encodeURIComponent({task_id_js}) + '?t=' + Date.now(),
+        {{cache: 'no-store'}}
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const paused = !!(data.metadata && data.metadata.paused);
+      const st = paused ? 'paused' : String(data.status || '');
+      const stages = Array.isArray(data.stages) ? data.stages : [];
+      const agent = String(data.current_agent_id || '');
+      // A new stage or a different speaker means the snapshot moved on; a full
+      // reload keeps the tooltips and stage formatting identical to a manual
+      // refresh instead of re-implementing them in JS.
+      if (RELOAD_STATES.includes(st) || stages.length !== knownStages || agent !== knownAgent) {{
+        clearInterval(timer);
+        location.reload();
+        return;
+      }}
+      if (statusEl) {{
+        statusEl.className = 'badge badge-' + st;
+        statusEl.textContent = LABELS[st] || st;
+      }}
+      if (updatedEl) {{
+        updatedEl.textContent = '（上次更新：' + new Date().toLocaleTimeString() + '）';
+      }}
+    }} catch (err) {{}}
+  }}, 5000);
+}})();
 </script>"""
 
     # ── Fix form ──────────────────────────────────────────────────────
@@ -1123,11 +1177,14 @@ document.addEventListener('DOMContentLoaded', loadChunks);
   <code>{esc(current_project_dir)}</code>，订阅不到它的实时事件流，
   所以这里不显示逐字输出。</p>
   <p style="font-size:13px;color:var(--text-dim);">
-  当前状态：{badge(display_status(task))} · 代理：{current_agent_html}。
-  想看实时输出：在该项目目录运行
+  当前状态：<span id="remoteStatusBadge">{badge(display_status(task))}</span>
+  · 代理：{current_agent_html}。
+  想看逐字实时输出：在该项目目录运行
   <code>aqm --project "{esc(task_project_dir)}" serve</code> 并打开它的控制台；
-  或者在「时间线」标签查看已落盘的阶段输出，刷新本页即可更新快照。</p>
+  或者在「时间线」标签查看已落盘的阶段输出。</p>
   {latest_stage_html}
+  <p style="font-size:12px;color:var(--text-dim);margin-top:8px;">
+  快照每 5 秒自动检查<span id="remoteUpdated"></span>，出现新阶段或任务状态变化时本页自动刷新。</p>
 </div>"""
     elif task.status in (TaskStatus.pending, TaskStatus.stalled):
         tab_output = (

@@ -1332,7 +1332,7 @@ document.addEventListener('DOMContentLoaded', loadChunks);
 }}
 .live-head .live-tag {{
   font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 10px;
-  background: rgba(255,255,255,.06); border: 1px solid var(--border); color: var(--text-dim);
+  background: var(--chip-bg); border: 1px solid var(--border); color: var(--text-dim);
 }}
 .live-head .live-state {{ font-size: 11px; font-weight: 500; color: var(--text-dim); }}
 .live-head .live-timer {{
@@ -1386,7 +1386,7 @@ document.addEventListener('DOMContentLoaded', loadChunks);
 .live-note-title {{ font-weight: 600; font-size: 13px; color: var(--text); }}
 .live-note-tag {{
   font-size: 11px; padding: 1px 8px; border-radius: 10px;
-  border: 1px solid var(--border); background: rgba(255,255,255,.05);
+  border: 1px solid var(--border); background: var(--chip-bg);
   color: var(--text-dim); white-space: nowrap;
 }}
 .live-note-tag.pending {{
@@ -1418,9 +1418,9 @@ document.addEventListener('DOMContentLoaded', loadChunks);
   padding: 9px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: rgba(22, 27, 34, .93);
+  background: var(--overlay-bg);
   backdrop-filter: blur(6px);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, .35);
+  box-shadow: var(--overlay-shadow);
   font-size: 12px;
 }}
 .live-now .now-dot {{

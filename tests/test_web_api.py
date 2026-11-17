@@ -133,6 +133,9 @@ class TestHTMLPages:
         # Tab radios live outside .tabs (CSS-only sibling switching), so they
         # need the global input[name="tab"] rule to stay invisible.
         assert 'input[name="tab"] { display:none; }' in r.text
+        # The sticky "current member" bar must follow the light/dark theme.
+        assert "background: var(--overlay-bg);" in r.text
+        assert "--overlay-bg: rgba(246, 248, 250, .95)" in r.text
 
     def test_task_detail_not_found(self, client):
         r = client.get("/tasks/T-NONEXISTENT")

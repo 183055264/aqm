@@ -20,12 +20,19 @@ CSS = """\
   --accent: #58a6ff; --green: #3fb950; --red: #f85149; --orange: #d29922;
   --purple: #bc8cff; --cyan: #39d2c0; --radius: 8px;
   --sidebar-w: 240px;
+  /* Translucent layers that must follow the theme (sticky bars, chips). */
+  --overlay-bg: rgba(22, 27, 34, .93);
+  --overlay-shadow: 0 8px 22px rgba(0, 0, 0, .35);
+  --chip-bg: rgba(255, 255, 255, .06);
 }
 [data-theme="light"] {
   --bg: #ffffff; --surface: #f6f8fa; --surface2: #eaeef2; --border: #d0d7de;
   --text: #1f2328; --text-dim: #656d76;
   --accent: #0969da; --green: #1a7f37; --red: #cf222e; --orange: #9a6700;
   --purple: #8250df; --cyan: #0e7c6b;
+  --overlay-bg: rgba(246, 248, 250, .95);
+  --overlay-shadow: 0 8px 22px rgba(31, 35, 40, .14);
+  --chip-bg: rgba(31, 35, 40, .06);
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; line-height:1.6; }

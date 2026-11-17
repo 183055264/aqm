@@ -808,7 +808,7 @@ class TestMeetingAPI:
                          json={"pipeline": "default", "use_meeting_members": True})
         assert hr.status_code == 200
         data = hr.json()
-        assert "redirect" in data and "from=meeting" in data["redirect"]
+        assert "redirect" in data and "from_meeting=1" in data["redirect"]
         assert "/pipelines?edit=" in data["redirect"]
 
         # No task is created (handoffs are not wired yet).
@@ -833,7 +833,7 @@ class TestMeetingAPI:
     def test_handoff_use_meeting_members_name_is_sanitized_and_unique(self, client):
         r = client.post("/api/meetings", json={
             "topic": '非法/名字:*?"<>| 很长很长的会议主题用于测试名字清洗行为',
-            "agents": [{"id": "a1", "runtime": "claude"}],
+            "agents": [{"id": "a1", "name": "Agent One", "runtime": "claude"}],
         })
         meeting_id = r.json()["id"]
         client.put(f"/api/meetings/{meeting_id}/requirements", json={"content": "req"})

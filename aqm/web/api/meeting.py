@@ -429,7 +429,7 @@ def create_meeting_router(project_root: Path) -> APIRouter:
             return {
                 "meeting_id": meeting_id,
                 "pipeline": pipeline_name,
-                "redirect": f"/pipelines?edit={pipeline_name}&from=meeting",
+                "redirect": f"/pipelines?edit={pipeline_name}&from_meeting=1",
                 "message": "已用会议成员创建流水线，请设置成员间的交接关系后运行任务",
             }
 

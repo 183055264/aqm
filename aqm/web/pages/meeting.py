@@ -1630,8 +1630,9 @@ async function handoffToTask() {
     });
     const data = await postHandoff(false);
     if (useMeetingMembers && data.redirect) {
-      // Stash the meeting id + its agents so the pipeline editor can import
-      // them as the starting team once it opens on the /pipelines?from=meeting page.
+      // The backend has already written the meeting's members into the new
+      // pipeline. Stash the meeting's agent list anyway: the editor uses it to
+      // report how many members came across (and to explain an empty meeting).
       try {
         const m = await apiFetch(`/api/meetings/${currentMeetingId}`, {quiet: true});
         const agents = (m && m.agents) || [];

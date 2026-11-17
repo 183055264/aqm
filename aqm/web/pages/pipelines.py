@@ -118,9 +118,10 @@ def render_pipelines(
   <a class="btn btn-sm" href="/pipelines">返回流水线列表</a>
 </div>"""
     elif edit_name and edit_content is not None:
+        banner_display = "block" if from_meeting else "none"
         meeting_banner = (
-            '<div id="meetingImportBanner" '
-            'style="display:none;margin-bottom:12px;padding:10px 14px;border:1px solid var(--orange);'
+            f'<div id="meetingImportBanner" style="display:{banner_display};margin-bottom:12px;'
+            'padding:10px 14px;border:1px solid var(--orange);'
             'background:var(--surface2);border-left:4px solid var(--orange);border-radius:8px;'
             'font-size:13px;line-height:1.7;">'
             '<strong style="color:var(--orange);">已从会议导入成员，正在编辑流水线</strong>'
@@ -362,9 +363,17 @@ async function saveFromCurrentTab() {{
     await savePipelineYaml();
   }}
   // The "set your handoffs" banner is a one-time hint after a meeting import;
-  // a save means the user has (or is about to have) the flow they want.
+  // a save means the user has (or is about to have) the flow they want.  Drop
+  // the from_meeting flag from the URL too, so a refresh doesn't bring it back.
   const banner = document.getElementById('meetingImportBanner');
-  if (banner) banner.style.display = 'none';
+  if (banner) {{
+    banner.style.display = 'none';
+    try {{
+      const u = new URL(location.href);
+      u.searchParams.delete('from_meeting');
+      history.replaceState(null, '', u.pathname + (u.search ? u.search : ''));
+    }} catch(e) {{}}
+  }}
   showToast('流水线已保存');
 }}
 
@@ -1060,48 +1069,23 @@ async function importTeamTemplate() {{
   }}
 }}
 
-/* Import the meeting's members (stashed in sessionStorage by the handoff
-   flow) into this freshly-created pipeline.  Meetings have no handoffs, so
-   each member is added with an empty handoff list — the banner prompts the user
-   to wire them up before saving. */
+/* The meeting's members are already written into this pipeline by the handoff
+   endpoint (_pipeline_yaml_from_meeting), so there is nothing to import: the
+   editor just needs to reload the agent cards and prompt the user to wire up the
+   handoffs (a meeting is a group of people with no flow). */
 async function importMeetingMembers() {{
   if (!EDIT_PIPELINE) return;
   const banner = document.getElementById('meetingImportBanner');
   let stashed = null;
   try {{ stashed = JSON.parse(sessionStorage.getItem('aqm_meeting_agents') || 'null'); }} catch(e) {{ stashed = null; }}
   const agents = (stashed && stashed.agents) || [];
+  // Refresh the member cards from the pipeline YAML, then reveal the
+  // "set your handoffs" banner.  The stash is a one-shot delivery vehicle.
   if (agents.length) {{
-    const existing = new Set(PIPELINE_AGENTS.map(a => a.id));
-    let added = 0, skipped = 0;
-    for (const a of agents) {{
-      if (!a || !a.id) continue;
-      if (existing.has(a.id)) {{ skipped += 1; continue; }}
-      await apiFetch(
-        '/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/agents',
-        {{
-          method: 'POST',
-          body: JSON.stringify({{
-            id: a.id,
-            name: a.name || a.id,
-            runtime: a.runtime || 'claude',
-            model: a.model || null,
-            system_prompt: a.system_prompt || '',
-            type: 'agent',
-            handoffs: [],
-          }}),
-        }}
-      );
-      added += 1;
-    }}
-    showToast('已从会议导入 ' + added + ' 个成员' + (skipped ? '，跳过 ' + skipped + ' 个同名成员' : ''));
     await loadAgentCards();
-  }} else {{
-    showToast('未取到会议的成员配置，请在下方手动添加代理', 'info');
+    showToast('已从会议导入 ' + agents.length + ' 个成员，请设置交接关系', 'success');
   }}
-  // Reveal the "set your handoffs" banner either way; it is dismissed on save.
   if (banner) banner.style.display = 'block';
-  // The stash is a one-shot delivery vehicle; clear it so revisiting this
-  // pipeline later doesn't re-import (or show a stale banner).
   try {{ sessionStorage.removeItem('aqm_meeting_agents'); }} catch(e) {{}}
 }}
 

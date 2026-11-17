@@ -91,6 +91,20 @@ class TestHTMLPages:
         assert "编辑: default" in r.text
         assert "yamlEditor" in r.text
 
+    def test_pipelines_edit_from_meeting_shows_banner(self, client):
+        # Arriving through the meeting handoff must show the "set your handoffs"
+        # banner straight away, without depending on the page's JS running.
+        r = client.get("/pipelines?edit=default&from_meeting=1")
+        assert r.status_code == 200
+        assert 'id="meetingImportBanner"' in r.text
+        assert 'id="meetingImportBanner" style="display:block' in r.text
+        assert "const FROM_MEETING = '1'" in r.text
+
+    def test_pipelines_edit_without_meeting_hides_banner(self, client):
+        r = client.get("/pipelines?edit=default")
+        assert r.status_code == 200
+        assert 'id="meetingImportBanner" style="display:none' in r.text
+
     def test_pipelines_missing_edit_shows_explanation(self, client):
         # A link from a task that belongs to another project must not render an
         # editor that then 404s and throws in JS.

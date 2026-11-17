@@ -1642,7 +1642,7 @@ async function handoffToTask() {
           agents,
         }));
       } catch (err) { /* fall back to empty import */ }
-      showToast('已用会议成员创建流水线，请设置交接关系', 'success');
+      showToast('已用会议成员创建流水线，配好交接后保存即自动启动任务', 'success');
       setTimeout(() => { location.href = data.redirect; }, 700);
       return;
     }
@@ -1656,7 +1656,7 @@ async function handoffToTask() {
         try {
           const data = await postHandoff(true);
           if (useMeetingMembers && data.redirect) {
-            showToast('已用会议成员创建流水线，请设置交接关系', 'success');
+            showToast('已用会议成员创建流水线，配好交接后保存即自动启动任务', 'success');
             setTimeout(() => { location.href = data.redirect; }, 700);
             return;
           }

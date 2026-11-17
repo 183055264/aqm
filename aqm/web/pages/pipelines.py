@@ -119,6 +119,7 @@ def render_pipelines(
 </div>"""
     elif edit_name and edit_content is not None:
         banner_display = "block" if from_meeting else "none"
+        save_label = "保存并启动" if from_meeting else "保存"
         meeting_banner = (
             f'<div id="meetingImportBanner" style="display:{banner_display};margin-bottom:12px;'
             'padding:10px 14px;border:1px solid var(--orange);'
@@ -127,7 +128,8 @@ def render_pipelines(
             '<strong style="color:var(--orange);">已从会议导入成员，正在编辑流水线</strong>'
             '<div style="margin-top:2px;color:var(--text-dim);">'
             '请为每个成员设置<b>交接关系</b>（谁转给谁、在什么条件下交接、带什么内容），'
-            '设置完成后点击「保存」。只有保存后的流水线才能用来运行任务。</div>'
+            '然后点击「保存」。<b>保存后会自动用这条流水线启动开发任务</b>；'
+            '如果想稍后再跑，可以先关闭页面，不过只有保存过的流水线才能运行任务。</div>'
             '</div>'
         )
         editor_section = f"""\
@@ -136,7 +138,7 @@ def render_pipelines(
     <h3>编辑: {esc(edit_name)}</h3>
     <div style="display:flex;gap:8px;">
       <button class="btn btn-sm" onclick="validateYaml()">校验</button>
-      <button class="btn btn-sm btn-primary" onclick="saveFromCurrentTab()">保存</button>
+      <button class="btn btn-sm btn-primary" onclick="saveFromCurrentTab()">{save_label}</button>
       <a class="btn btn-sm" href="/pipelines">关闭</a>
     </div>
   </div>
@@ -358,23 +360,92 @@ function switchEditorTab(tab) {{
 }}
 
 /* ── Save from current tab ─────────────────── */
+let taskStartInFlight = false;
+
+function clearMeetingFlag() {{
+  const banner = document.getElementById('meetingImportBanner');
+  if (banner) banner.style.display = 'none';
+  // Drop the from_meeting flag from the URL so a refresh doesn't bring a
+  // "please save to start" prompt back after the task has already started.
+  try {{
+    const u = new URL(location.href);
+    u.searchParams.delete('from_meeting');
+    history.replaceState(null, '', u.pathname + (u.search ? u.search : ''));
+  }} catch(e) {{}}
+}}
+
 async function saveFromCurrentTab() {{
   if (currentTab === 'yaml') {{
-    await savePipelineYaml();
-  }}
-  // The "set your handoffs" banner is a one-time hint after a meeting import;
-  // a save means the user has (or is about to have) the flow they want.  Drop
-  // the from_meeting flag from the URL too, so a refresh doesn't bring it back.
-  const banner = document.getElementById('meetingImportBanner');
-  if (banner) {{
-    banner.style.display = 'none';
-    try {{
-      const u = new URL(location.href);
-      u.searchParams.delete('from_meeting');
-      history.replaceState(null, '', u.pathname + (u.search ? u.search : ''));
-    }} catch(e) {{}}
+    const ok = await savePipelineYaml();
+    if (!ok) {{ showToast('保存失败，请检查 YAML', 'error'); return; }}
   }}
   showToast('流水线已保存');
+  if (!FROM_MEETING) {{
+    const banner = document.getElementById('meetingImportBanner');
+    if (banner) banner.style.display = 'none';
+    return;
+  }}
+  // This pipeline was scaffolded from a meeting: saving it means the flow is
+  // ready, so kick off the development task with the meeting's requirements.
+  // A multi-member pipeline with no handoffs would only run its first member,
+  // which is almost never what the user means — confirm before doing that.
+  if (!(await pipelineHasHandoffs()) &&
+      !window.confirm('这条流水线还没有设置任何交接关系，启动后只会运行第一个成员。仍要启动吗？')) {{
+    return;
+  }}
+  await startTaskFromMeeting(false);
+}}
+
+async function pipelineHasHandoffs() {{
+  try {{
+    const agents = await apiFetch(
+      '/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/agents', {{quiet: true}});
+    const list = Array.isArray(agents) ? agents : [];
+    return list.length <= 1 || list.some(a => (a.handoffs || []).length > 0);
+  }} catch (e) {{
+    return true;  // let the backend surface the real error
+  }}
+}}
+
+/* Start the task for a pipeline that came from a meeting.  force=true is used
+   after the user confirms a re-run when the meeting already has tasks. */
+async function startTaskFromMeeting(force) {{
+  if (taskStartInFlight) return;
+  taskStartInFlight = true;
+  try {{
+    const data = await apiFetch(
+      '/api/meetings/' + encodeURIComponent(FROM_MEETING) + '/handoff',
+      {{ method: 'POST', quiet: true, body: JSON.stringify({{ pipeline: EDIT_PIPELINE, force: !!force }}) }}
+    );
+    clearMeetingFlag();
+    showToast('流水线已启动，任务: ' + data.task_id, 'success');
+    setTimeout(() => {{ location.href = '/tasks/' + encodeURIComponent(data.task_id); }}, 600);
+  }} catch (e) {{
+    const detail = e && e.detail;
+    if (e && e.status === 409 && detail && detail.code === 'task_active') {{
+      clearMeetingFlag();
+      showToast('该会议已有正在运行的任务，正在打开…', 'info');
+      setTimeout(() => {{ location.href = '/tasks/' + encodeURIComponent(detail.task_id); }}, 600);
+    }} else if (e && e.status === 409 && detail && detail.code === 'task_exists') {{
+      const ok = window.confirm(
+        '该会议已创建过 ' + (detail.count || 1) + ' 个任务，最新为 ' + detail.task_id +
+        '（' + detail.status + '）。\\n\\n是否仍要用这条流水线启动一个新任务？\\n' +
+        '（取消则打开已有任务）'
+      );
+      if (ok) {{
+        taskStartInFlight = false;
+        await startTaskFromMeeting(true);
+      }} else {{
+        clearMeetingFlag();
+        setTimeout(() => {{ location.href = '/tasks/' + encodeURIComponent(detail.task_id); }}, 300);
+      }}
+    }} else {{
+      const msg = (detail && (detail.message || detail)) || e.message || e;
+      showToast('启动任务失败: ' + msg, 'error');
+    }}
+  }} finally {{
+    taskStartInFlight = false;
+  }}
 }}
 
 /* ── Load agent cards ──────────────────────── */
@@ -963,10 +1034,11 @@ async function createPipeline(mode) {{
 }}
 async function savePipelineYaml() {{
   const content = document.getElementById('yamlEditor')?.value;
-  if (!EDIT_PIPELINE || !content) return;
+  if (!EDIT_PIPELINE || !content) return false;
   try {{
     await apiFetch('/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE), {{method:'PUT', body:JSON.stringify({{content}})}});
-  }} catch(e) {{}}
+    return true;
+  }} catch(e) {{ return false; }}
 }}
 async function validateYaml() {{
   let content;

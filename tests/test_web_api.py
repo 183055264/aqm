@@ -94,16 +94,20 @@ class TestHTMLPages:
     def test_pipelines_edit_from_meeting_shows_banner(self, client):
         # Arriving through the meeting handoff must show the "set your handoffs"
         # banner straight away, without depending on the page's JS running.
-        r = client.get("/pipelines?edit=default&from_meeting=1")
+        r = client.get("/pipelines?edit=default&from_meeting=abc123")
         assert r.status_code == 200
         assert 'id="meetingImportBanner"' in r.text
         assert 'id="meetingImportBanner" style="display:block' in r.text
-        assert "const FROM_MEETING = '1'" in r.text
+        assert "const FROM_MEETING = 'abc123'" in r.text
+        # Saving such a pipeline starts the meeting's task automatically.
+        assert "startTaskFromMeeting" in r.text
+        assert "保存并启动" in r.text
 
     def test_pipelines_edit_without_meeting_hides_banner(self, client):
         r = client.get("/pipelines?edit=default")
         assert r.status_code == 200
         assert 'id="meetingImportBanner" style="display:none' in r.text
+        assert "保存并启动" not in r.text
 
     def test_pipelines_missing_edit_shows_explanation(self, client):
         # A link from a task that belongs to another project must not render an
@@ -822,7 +826,7 @@ class TestMeetingAPI:
                          json={"pipeline": "default", "use_meeting_members": True})
         assert hr.status_code == 200
         data = hr.json()
-        assert "redirect" in data and "from_meeting=1" in data["redirect"]
+        assert "redirect" in data and f"from_meeting={meeting_id}" in data["redirect"]
         assert "/pipelines?edit=" in data["redirect"]
 
         # No task is created (handoffs are not wired yet).
@@ -843,6 +847,72 @@ class TestMeetingAPI:
         assert by_id["bob"]["runtime"] == "opencode"
         # Meetings have no flow: every member lands with empty handoffs.
         assert all(a["handoffs"] == [] for a in agents)
+
+    def test_handoff_with_saved_meeting_pipeline_starts_task(self, client, monkeypatch):
+        """After the user wires the handoffs in the scaffolded pipeline, handing
+        the meeting off with that pipeline starts the task (the editor's Save
+        button does exactly this through the API)."""
+        from aqm.web.api import tasks as tasks_api
+
+        class _NoThread:
+            def __init__(self, *a, **kw):
+                pass
+
+            def start(self):
+                pass
+
+        class _ThreadingShim:
+            Thread = _NoThread
+
+        monkeypatch.setattr(tasks_api, "threading", _ThreadingShim)
+
+        r = client.post("/api/meetings", json={
+            "topic": "Auto start flow",
+            "agents": [
+                {"id": "planner", "name": "规划", "runtime": "claude"},
+                {"id": "builder", "name": "实现", "runtime": "opencode"},
+            ],
+        })
+        meeting_id = r.json()["id"]
+        client.put(f"/api/meetings/{meeting_id}/requirements",
+                   json={"content": "# 需求\n做点小东西\n"})
+
+        hr = client.post(f"/api/meetings/{meeting_id}/handoff",
+                         json={"use_meeting_members": True})
+        assert hr.status_code == 200
+        pipeline_name = hr.json()["redirect"].split("edit=")[1].split("&")[0]
+
+        # The user finishes the editor and saves: handoffs are now wired.
+        content = """
+agents:
+  - id: planner
+    name: 规划
+    runtime: claude
+    system_prompt: 先规划
+    handoffs:
+      - to: builder
+        condition: always
+  - id: builder
+    name: 实现
+    runtime: opencode
+    system_prompt: 再实现
+    handoffs: []
+entry_point: first
+"""
+        pr = client.put(f"/api/pipelines/{pipeline_name}", json={"content": content})
+        assert pr.status_code == 200
+
+        sr = client.post(f"/api/meetings/{meeting_id}/handoff",
+                         json={"pipeline": pipeline_name})
+        assert sr.status_code == 200
+        data = sr.json()
+        assert data["status"] == "started"
+        assert data["task_id"]
+
+        td = client.get(f"/api/tasks/{data['task_id']}").json()
+        meta = td.get("metadata") or {}
+        assert meta.get("pipeline") == pipeline_name
+        assert meta.get("source_meeting_id") == meeting_id
 
     def test_handoff_use_meeting_members_name_is_sanitized_and_unique(self, client):
         r = client.post("/api/meetings", json={

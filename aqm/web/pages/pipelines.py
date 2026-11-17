@@ -13,6 +13,7 @@ def render_pipelines(
     edit_name: str | None = None,
     edit_content: str | None = None,
     edit_project: str | None = None,
+    from_meeting: str | None = None,
 ) -> str:
     # Pipeline table
     if pipelines:
@@ -117,6 +118,17 @@ def render_pipelines(
   <a class="btn btn-sm" href="/pipelines">返回流水线列表</a>
 </div>"""
     elif edit_name and edit_content is not None:
+        meeting_banner = (
+            '<div id="meetingImportBanner" '
+            'style="display:none;margin-bottom:12px;padding:10px 14px;border:1px solid var(--orange);'
+            'background:var(--surface2);border-left:4px solid var(--orange);border-radius:8px;'
+            'font-size:13px;line-height:1.7;">'
+            '<strong style="color:var(--orange);">已从会议导入成员，正在编辑流水线</strong>'
+            '<div style="margin-top:2px;color:var(--text-dim);">'
+            '请为每个成员设置<b>交接关系</b>（谁转给谁、在什么条件下交接、带什么内容），'
+            '设置完成后点击「保存」。只有保存后的流水线才能用来运行任务。</div>'
+            '</div>'
+        )
         editor_section = f"""\
 <div class="card" style="border-color:var(--accent);">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -127,6 +139,7 @@ def render_pipelines(
       <a class="btn btn-sm" href="/pipelines">关闭</a>
     </div>
   </div>
+  {meeting_banner}
   <div id="validationResult" style="margin-bottom:8px;"></div>
 
   <!-- Editor Tabs -->
@@ -324,6 +337,7 @@ def render_pipelines(
     js = f"""\
 <script>
 const EDIT_PIPELINE = {f"'{esc(edit_name)}'" if editor_available else "null"};
+const FROM_MEETING = {f"'{esc(from_meeting)}'" if (editor_available and from_meeting) else "null"};
 let currentTab = 'visual';
 let editingAgentId = null;
 let EDITING_AGENT = null;
@@ -347,6 +361,10 @@ async function saveFromCurrentTab() {{
   if (currentTab === 'yaml') {{
     await savePipelineYaml();
   }}
+  // The "set your handoffs" banner is a one-time hint after a meeting import;
+  // a save means the user has (or is about to have) the flow they want.
+  const banner = document.getElementById('meetingImportBanner');
+  if (banner) banner.style.display = 'none';
   showToast('流水线已保存');
 }}
 
@@ -1042,12 +1060,58 @@ async function importTeamTemplate() {{
   }}
 }}
 
+/* Import the meeting's members (stashed in sessionStorage by the handoff
+   flow) into this freshly-created pipeline.  Meetings have no handoffs, so
+   each member is added with an empty handoff list — the banner prompts the user
+   to wire them up before saving. */
+async function importMeetingMembers() {{
+  if (!EDIT_PIPELINE) return;
+  const banner = document.getElementById('meetingImportBanner');
+  let stashed = null;
+  try {{ stashed = JSON.parse(sessionStorage.getItem('aqm_meeting_agents') || 'null'); }} catch(e) {{ stashed = null; }}
+  const agents = (stashed && stashed.agents) || [];
+  if (agents.length) {{
+    const existing = new Set(PIPELINE_AGENTS.map(a => a.id));
+    let added = 0, skipped = 0;
+    for (const a of agents) {{
+      if (!a || !a.id) continue;
+      if (existing.has(a.id)) {{ skipped += 1; continue; }}
+      await apiFetch(
+        '/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/agents',
+        {{
+          method: 'POST',
+          body: JSON.stringify({{
+            id: a.id,
+            name: a.name || a.id,
+            runtime: a.runtime || 'claude',
+            model: a.model || null,
+            system_prompt: a.system_prompt || '',
+            type: 'agent',
+            handoffs: [],
+          }}),
+        }}
+      );
+      added += 1;
+    }}
+    showToast('已从会议导入 ' + added + ' 个成员' + (skipped ? '，跳过 ' + skipped + ' 个同名成员' : ''));
+    await loadAgentCards();
+  }} else {{
+    showToast('未取到会议的成员配置，请在下方手动添加代理', 'info');
+  }}
+  // Reveal the "set your handoffs" banner either way; it is dismissed on save.
+  if (banner) banner.style.display = 'block';
+  // The stash is a one-shot delivery vehicle; clear it so revisiting this
+  // pipeline later doesn't re-import (or show a stale banner).
+  try {{ sessionStorage.removeItem('aqm_meeting_agents'); }} catch(e) {{}}
+}}
+
 /* Init: the layout's shared helpers load after this script, so wait for the
    document to finish parsing instead of relying on timers. */
 document.addEventListener('DOMContentLoaded', function () {{
   if (!EDIT_PIPELINE) return;
   loadAgentCards();
   loadTeamTemplateOptions();
+  if (FROM_MEETING) importMeetingMembers();
 }});
 </script>"""
 

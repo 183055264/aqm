@@ -784,6 +784,75 @@ class TestMeetingAPI:
         restored = client.get(f"/api/meetings/{meeting_id}")
         assert "provider_id" not in restored.json()["agents"][0]
 
+    def test_handoff_use_meeting_members_creates_pipeline_not_task(self, client):
+        """With use_meeting_members, handoff scaffolds a new pipeline carrying
+        the meeting's agents and redirects to its editor instead of running a task."""
+        r = client.post("/api/meetings", json={
+            "topic": "VBA 大乐透杀号工具",
+            "agents": [
+                {"id": "alice", "name": "架构", "runtime": "claude",
+                 "system_prompt": "架构提示", "model": "sonnet"},
+                {"id": "bob", "name": "实现", "runtime": "opencode",
+                 "system_prompt": "实现提示"},
+            ],
+        })
+        assert r.status_code == 200
+        meeting_id = r.json()["id"]
+
+        # Handoff requires a requirements document.
+        pr = client.put(f"/api/meetings/{meeting_id}/requirements",
+                        json={"content": "# 需求\n做一个杀号工具\n"})
+        assert pr.status_code == 200
+
+        hr = client.post(f"/api/meetings/{meeting_id}/handoff",
+                         json={"pipeline": "default", "use_meeting_members": True})
+        assert hr.status_code == 200
+        data = hr.json()
+        assert "redirect" in data and "from=meeting" in data["redirect"]
+        assert "/pipelines?edit=" in data["redirect"]
+
+        # No task is created (handoffs are not wired yet).
+        tasks = client.get(f"/api/meetings/{meeting_id}/tasks").json()
+        assert tasks == []
+
+        # The new pipeline exists and carries the meeting's members.
+        pipes = client.get("/api/pipelines").json()["pipelines"]
+        names = [p["name"] for p in pipes]
+        pipeline_name = data["redirect"].split("edit=")[1].split("&")[0]
+        assert pipeline_name in names
+
+        agents = client.get(f"/api/pipelines/{pipeline_name}/agents").json()
+        by_id = {a["id"]: a for a in agents}
+        assert set(by_id) == {"alice", "bob"}
+        assert by_id["alice"]["system_prompt"] == "架构提示"
+        assert by_id["alice"]["model"] == "sonnet"
+        assert by_id["bob"]["runtime"] == "opencode"
+        # Meetings have no flow: every member lands with empty handoffs.
+        assert all(a["handoffs"] == [] for a in agents)
+
+    def test_handoff_use_meeting_members_name_is_sanitized_and_unique(self, client):
+        r = client.post("/api/meetings", json={
+            "topic": '非法/名字:*?"<>| 很长很长的会议主题用于测试名字清洗行为',
+            "agents": [{"id": "a1", "runtime": "claude"}],
+        })
+        meeting_id = r.json()["id"]
+        client.put(f"/api/meetings/{meeting_id}/requirements", json={"content": "req"})
+
+        hr1 = client.post(f"/api/meetings/{meeting_id}/handoff",
+                          json={"use_meeting_members": True})
+        assert hr1.status_code == 200
+        name1 = hr1.json()["redirect"].split("edit=")[1].split("&")[0]
+        # Illegal filename characters are stripped; name stays short.
+        assert not any(c in name1 for c in '\\/:*?"<>|')
+
+        # Creating again must not clobber the first pipeline.
+        hr2 = client.post(f"/api/meetings/{meeting_id}/handoff",
+                          json={"use_meeting_members": True})
+        assert hr2.status_code == 200
+        name2 = hr2.json()["redirect"].split("edit=")[1].split("&")[0]
+        assert name2 != name1
+        assert client.get("/api/pipelines").json()["pipelines"]
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # CONTEXT API

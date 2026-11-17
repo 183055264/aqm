@@ -226,7 +226,7 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
         )
 
     @app.get("/pipelines", response_class=HTMLResponse)
-    async def pipelines_page(edit: str | None = None):
+    async def pipelines_page(edit: str | None = None, from_meeting: str | None = None):
         from aqm.web.pages.pipelines import render_pipelines
         from aqm.web.task_projects import project_roots
 
@@ -283,6 +283,7 @@ def create_app(project_root: Path, host: str = "127.0.0.1", port: int = 8000) ->
             edit_name=edit,
             edit_content=edit_content,
             edit_project=edit_project,
+            from_meeting=from_meeting,
         )
 
     @app.get("/tasks/{task_id}", response_class=HTMLResponse)

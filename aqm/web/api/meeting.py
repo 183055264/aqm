@@ -77,6 +77,69 @@ class HandoffRequest(BaseModel):
     agent_id: Optional[str] = None
     # Create another task even when this meeting already produced one.
     force: bool = False
+    # Instead of starting a task right away, scaffold a brand-new pipeline whose
+    # members are this meeting's agents, then send the user to the pipeline
+    # editor to wire up the handoffs (which a meeting, being just a group of
+    # people, does not have).
+    use_meeting_members: bool = False
+
+
+def _meeting_pipeline_name(meeting, root) -> str:
+    """Derive a safe pipeline filename from the meeting topic.
+
+    Strips characters that are illegal or awkward in a filename, collapses
+    runs of separators, and keeps at most ~40 chars so the name stays usable.
+    """
+    import re
+
+    topic = (meeting.topic or "meeting").strip()
+    cleaned = re.sub(r'[\\/:*?"<>|\s]+', "-", topic)
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-")
+    cleaned = cleaned[:40].rstrip("-")
+    return cleaned or "meeting"
+
+
+def _pipeline_yaml_from_meeting(meeting, pipeline_name: str) -> str:
+    """Build a pipeline YAML whose agents come from the meeting's members.
+
+    Handoffs are deliberately empty: a meeting is a group of people with no
+    directed flow, so the user must wire up who hands off to whom in the
+    pipeline editor before the task can run.
+    """
+    import json
+
+    def _lit(value: str) -> str:
+        # Dump as a JSON string, then strip the surrounding quotes and re-escape
+        # the contents for YAML double-quoted style.  json.dumps gives us the
+        # escaping for free; we just need YAML-safe double quotes.
+        body = json.dumps(value, ensure_ascii=False)
+        if body.startswith('"') and body.endswith('"'):
+            body = body[1:-1]
+        return f'"{body}"'
+
+    agents = []
+    for a in meeting.agents:
+        entry = [f"  - id: {a.id}"]
+        if a.name and a.name != a.id:
+            entry.append(f"    name: {_lit(a.name)}")
+        entry.append(f"    runtime: {a.runtime}")
+        if a.model:
+            entry.append(f"    model: {_lit(a.model)}")
+        prompt = a.system_prompt or ""
+        if prompt:
+            entry.append(f"    system_prompt: {_lit(prompt)}")
+        # No handoffs yet: the user must set them in the editor.
+        agents.append("\n".join(entry))
+
+    header = (
+        f"# Auto-created from meeting \"{meeting.topic}\".\n"
+        "# The members were taken from the meeting; handoffs are empty and must\n"
+        "# be set in the pipeline editor before this pipeline can run a task.\n"
+        "apiVersion: aqm/v0.1\n"
+        "entry_point: first\n"
+        "agents:\n"
+    )
+    return header + "\n".join(agents) + "\n"
 
 
 def create_meeting_router(project_root: Path) -> APIRouter:
@@ -347,6 +410,28 @@ def create_meeting_router(project_root: Path) -> APIRouter:
                 400,
                 "需求文档尚未生成，请先生成或手工填写 REQUIREMENTS.md",
             )
+
+        # "Use the meeting's members as this task's team": meetings are just a
+        # group of people with no handoffs, so we cannot run a task from them
+        # directly.  Scaffold a brand-new pipeline carrying the meeting's agents
+        # and hand the user off to the editor to wire up the handoffs there.
+        if req and req.use_meeting_members:
+            from aqm.core.project import list_pipelines, save_pipeline
+
+            pipeline_name = _meeting_pipeline_name(meeting, root)
+            existing = set(list_pipelines(root))
+            base, n = pipeline_name, 2
+            while pipeline_name in existing:
+                pipeline_name = f"{base}-{n}"
+                n += 1
+            yaml_content = _pipeline_yaml_from_meeting(meeting, pipeline_name)
+            save_pipeline(root, pipeline_name, yaml_content)
+            return {
+                "meeting_id": meeting_id,
+                "pipeline": pipeline_name,
+                "redirect": f"/pipelines?edit={pipeline_name}&from=meeting",
+                "message": "已用会议成员创建流水线，请设置成员间的交接关系后运行任务",
+            }
 
         # Prevent accidental duplicates: one meeting normally maps to one task.
         existing = [

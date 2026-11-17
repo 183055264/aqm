@@ -109,6 +109,11 @@ def render_meeting() -> str:
                   style="padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text-dim);max-width:220px;">
             <option value="">选择流水线</option>
           </select>
+          <label id="useMeetingMembersLabel" title="用会议的成员配置作为本次任务的团队；勾选后会基于会议主题新建一条流水线，并把会议成员带进去，你需要为成员设置交接关系"
+                 style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;">
+            <input type="checkbox" id="useMeetingMembers" style="margin:0;">
+            用会议成员做团队
+          </label>
           <button class="btn btn-sm btn-primary" id="btnHandoff" onclick="handoffToTask()">转为开发任务</button>
         </div>
       </div>
@@ -1592,9 +1597,12 @@ async function handoffToTask() {
   if (!currentMeetingId) return;
   const content = document.getElementById('requirementsContent')?.value?.trim();
   if (!content) { showToast('需求文档为空，请先生成或填写', 'error'); return; }
+  const useMeetingMembers = !!document.getElementById('useMeetingMembers')?.checked;
   const pipelineSel = document.getElementById('handoffPipeline');
   const pipeline = pipelineSel?.value || '';
-  if (!pipeline) {
+  // When using the meeting's members, a brand-new pipeline named after the
+  // meeting is created, so the dropdown target pipeline is not needed.
+  if (!useMeetingMembers && !pipeline) {
     showToast('请先选择流水线', 'error');
     if (pipelineSel) {
       pipelineSel.focus();
@@ -1609,7 +1617,11 @@ async function handoffToTask() {
   const postHandoff = (force) => apiFetch(`/api/meetings/${currentMeetingId}/handoff`, {
     method: 'POST',
     quiet: true,
-    body: JSON.stringify(force ? {pipeline, force: true} : {pipeline}),
+    body: JSON.stringify({
+      pipeline,
+      force,
+      use_meeting_members: useMeetingMembers,
+    }),
   });
   try {
     // Persist any manual edits before handing off.
@@ -1617,6 +1629,22 @@ async function handoffToTask() {
       method: 'PUT', body: JSON.stringify({content}),
     });
     const data = await postHandoff(false);
+    if (useMeetingMembers && data.redirect) {
+      // Stash the meeting id + its agents so the pipeline editor can import
+      // them as the starting team once it opens on the /pipelines?from=meeting page.
+      try {
+        const m = await apiFetch(`/api/meetings/${currentMeetingId}`, {quiet: true});
+        const agents = (m && m.agents) || [];
+        sessionStorage.setItem('aqm_meeting_agents', JSON.stringify({
+          meeting_id: currentMeetingId,
+          topic: m && m.topic || '',
+          agents,
+        }));
+      } catch (err) { /* fall back to empty import */ }
+      showToast('已用会议成员创建流水线，请设置交接关系', 'success');
+      setTimeout(() => { location.href = data.redirect; }, 700);
+      return;
+    }
     showToast('开发任务已创建: ' + data.task_id);
     setTimeout(() => { location.href = '/tasks/' + data.task_id; }, 700);
   } catch (e) {
@@ -1626,6 +1654,11 @@ async function handoffToTask() {
       if (ok) {
         try {
           const data = await postHandoff(true);
+          if (useMeetingMembers && data.redirect) {
+            showToast('已用会议成员创建流水线，请设置交接关系', 'success');
+            setTimeout(() => { location.href = data.redirect; }, 700);
+            return;
+          }
           showToast('开发任务已创建: ' + data.task_id);
           setTimeout(() => { location.href = '/tasks/' + data.task_id; }, 700);
           return;

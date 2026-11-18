@@ -763,18 +763,26 @@ function scheduleAgentLabel(id) {{
 }}
 
 function scheduleRoundHtml(entry) {{
+  const selected = entry.selected || [];
+  const notes = (entry.notes || []).map(note =>
+    '<div class="schedule-note">' + chunkEscape(note) + '</div>'
+  ).join('');
+  if (!selected.length) {{
+    // A closing round has no members: it only explains why parallel stopped.
+    return notes
+      ? '<div class="schedule-round schedule-round-note">' +
+          '<span class="schedule-round-no">调度说明</span>' + notes + '</div>'
+      : '';
+  }}
   const mode = entry.mode === 'parallel' ? 'parallel' : 'serial';
   const modeText = mode === 'parallel'
-    ? ('并行 ' + (entry.selected || []).length + ' 人')
+    ? ('并行 ' + selected.length + ' 人')
     : '串行 1 人';
-  const names = (entry.selected || []).map(scheduleAgentLabel).join('、') || '无';
+  const names = selected.map(scheduleAgentLabel).join('、') || '无';
   const waits = (entry.waiting || []).map(item =>
     '<div class="schedule-wait"><span class="schedule-who">' +
     chunkEscape(scheduleAgentLabel(item.agent_id)) + '</span>' +
     chunkEscape(item.reason || '') + '</div>'
-  ).join('');
-  const notes = (entry.notes || []).map(note =>
-    '<div class="schedule-note">' + chunkEscape(note) + '</div>'
   ).join('');
   return '<div class="schedule-round">' +
     '<div class="schedule-round-head">' +
@@ -794,21 +802,21 @@ function renderSchedule() {{
     : '串行执行 · 并行未开启';
   badge.className = 'schedule-badge' + (on ? ' is-on' : '');
 
-  const log = (scheduleState.log || []).slice().reverse();
+  const cards = (scheduleState.log || []).slice().reverse()
+    .map(scheduleRoundHtml).filter(Boolean);
   let html = '';
-  if (!log.length) {{
+  if (!cards.length) {{
     html += '<div class="schedule-empty">' +
       (on
         ? '并行已开启，但还没有调度记录。架构阶段给出工作块与写范围后，这里会说明每一轮为什么并行或排队。'
         : '并行未开启，所有工作块按阶段串行执行。开启后这里会显示每一轮的调度理由。') +
       '</div>';
   }} else {{
-    const latest = log[0];
-    html += scheduleRoundHtml(latest);
-    if (log.length > 1) {{
+    html += cards[0];
+    if (cards.length > 1) {{
       html += '<details class="schedule-history"><summary>更早的 ' +
-        (log.length - 1) + ' 轮</summary>' +
-        log.slice(1).map(scheduleRoundHtml).join('') + '</details>';
+        (cards.length - 1) + ' 条</summary>' +
+        cards.slice(1).join('') + '</details>';
     }}
   }}
   if (scheduleState.stalled) {{

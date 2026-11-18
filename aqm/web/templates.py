@@ -370,6 +370,8 @@ select.control { appearance:none; cursor:pointer; }
 .schedule-empty { font-size:12px; color:var(--text-dim); line-height:1.6; }
 .schedule-round { font-size:12px; }
 .schedule-round-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.schedule-round-note { padding-left:10px; border-left:2px solid var(--border); }
+.schedule-round-note .schedule-round-no { display:block; margin-bottom:2px; }
 .schedule-round-no { color:var(--text-dim); font-variant-numeric:tabular-nums; }
 .schedule-mode { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--border); }
 .schedule-mode.is-parallel { color:var(--green); border-color:rgba(63,185,80,.35); }

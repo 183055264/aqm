@@ -303,6 +303,19 @@ def run_pipeline_bg(
             return
         queue = SQLiteQueue(get_db_path(project_root))
         project_config = load_project_config(project_root)
+        # Freeze the scheduling policy once per task so a restart or a project
+        # config edit mid-run cannot change how the remaining blocks are batched.
+        if not isinstance(task.metadata.get("_parallel_settings"), dict):
+            try:
+                from aqm.core.project import resolve_parallel_settings
+
+                task.metadata["_parallel_settings"] = resolve_parallel_settings(
+                    project_root,
+                    pipeline or task.metadata.get("pipeline"),
+                    project_config,
+                )
+            except Exception:  # noqa: BLE001 - scheduling must not block the run
+                logger.warning("Could not freeze parallel settings", exc_info=True)
         resident_handler = _resident_status_handler(task.id, agents)
         pipe = Pipeline(
             agents,

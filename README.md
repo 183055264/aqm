@@ -33,6 +33,7 @@
 - [Web 控制台](#web-控制台)
 - [核心功能](#核心功能)
 - [工作块（把大任务拆成可勾选的小块）](#工作块把大任务拆成可勾选的小块)
+- [并行调度（模块并行 + 写范围隔离）](#并行调度模块并行--写范围隔离)
 - [会议模式](#会议模式)
 - [示例与演示](#示例与演示)
 - [配置参考：`.aqm/config.yaml`](#配置参考aqmconfigyaml)
@@ -335,7 +336,7 @@ aqm serve --port 8000 --host 127.0.0.1
 | **实时输出** | 当前成员流式输出、思考（可折叠）、工具动作、成员状态、读秒 |
 | **时间线** | 每个阶段完整输出、门结果、审批记录 |
 | **上下文** | `context.md` 的实际内容，按上下文策略裁剪后的样子 |
-| **工作块** | 工作块列表、进度、负责人、▶ 逐块启动、编辑器 |
+| **工作块** | 工作块列表、进度、负责人、▶ 逐块启动、编辑器、顶部的**调度说明**面板 |
 
 运行中的任务，**审批与人工输入固定显示在「实时输出」页**，不需要来回切页签。
 
@@ -682,9 +683,13 @@ agents:
   - id: engineer
     chunks:
       enabled: true
+      auto_split: false
       initial:
         - "实现登录接口"
         - { description: "补单元测试", phase: "测试" }
+      max_chunks_per_stage: 1      # 一轮只做 1 块；0 / 省略 = 不限
+      forward_on_done: true        # 每完成一块就交给复核人
+      review_owner: reviewer       # 复核人（另一个成员 id）
 ```
 
 ### 指令协议
@@ -697,11 +702,47 @@ CHUNK_DONE: C-003 C-004
 CHUNK_BLOCK: C-005 等待 API 契约确认
 CHUNK_REMOVE: C-006
 CHUNK_ADD: 实现导出页面 [owner=writer] [phase=交付]
+CHUNK_REJECT: C-005 缺少错误码映射表
 ```
 
 - 指令行会从展示输出里剥离，原文追加到 `chunks.directives.log`，方便排查。
 - 状态：`pending / in_progress / done / blocked`。
-- **同一任务最多一个「进行中」**：开工前会释放上一阶段残留，所有终止路径统一释放，服务启动时清扫全部残留。
+- **同一任务最多一个「进行中」**：开工前会释放上一阶段残留，所有终止路径统一释放，服务启动时清扫全部残留。开启并行后，同一批次里会短暂出现多个「进行中」，批次结束即收敛。
+
+### 块级复核交接（逐块过审）
+
+默认关闭。给成员配上 `forward_on_done` + `review_owner` 后，流程从"整段跑完再交下一位"变成"做完一块就过审"：
+
+```yaml
+agents:
+  - id: writer
+    runtime: opencode
+    write_scope: ["src/**"]
+    chunks:
+      enabled: true
+      forward_on_done: true
+      review_owner: reviewer
+      max_chunks_per_stage: 1
+    handoffs:
+      - to: reviewer
+        condition: always
+
+  - id: reviewer
+    runtime: claude
+    system_prompt: |
+      检查 writer 刚完成的块是否满足要求。
+      通过就只输出「通过」，然后把控制权交回 writer；
+      有问题就输出 CHUNK_REJECT: C-003 具体问题。
+```
+
+| 复核人输出 | 结果 |
+|---|---|
+| 没写 `CHUNK_REJECT` | 通过。控制权回原成员，提示它继续下一块 |
+| `CHUNK_REJECT: C-003 问题` | 该块退回 `pending`，备注写入问题，控制权回原成员重做 |
+
+- 复核期间原成员的工作块不会被别人认领；复核人和原成员交替推进，直到原成员的块全部 `done`。
+- 涉及复核的成员**不参与并行批次**：复核必须严格有序。
+
 
 ### 未完成时怎么办（`enforce`）
 
@@ -733,6 +774,155 @@ aqm chunks clear  T-ABC123 --keep-done --yes
 aqm chunks import T-ABC123 REQUIREMENTS.md --owner engineer --phase 实现
 aqm chunks split  T-ABC123 --replace --keep-done
 ```
+
+---
+
+## 并行调度（模块并行 + 写范围隔离）
+
+默认**关闭**。开启后，一条流水线按三段执行：
+
+| 阶段 | 方式 | 说明 |
+|---|---|---|
+| ① 架构 / 拆分 | 串行 | 架构成员给出工作块与模块边界 |
+| ② 模块并行 | 并行，默认 2 人 | 写范围互不重叠的成员同时改**同一个项目目录** |
+| ③ 集成验收 | 串行 | 并行收尾后，剩余链路照常串行 |
+
+并行与否由三处共同决定：人在 config / YAML 里定规则，架构阶段定工作块和 owner，调度器每轮按前两者**确定性地**挑人——不看"感觉"，只算写范围。
+
+### 开启
+
+项目级 `.aqm/config.yaml`：
+
+```yaml
+pipeline:
+  parallel:
+    enabled: true
+    max_workers: 2
+```
+
+流水线 YAML 顶层的同名字段优先级更高（浅合并，只覆盖写到的键）：
+
+```yaml
+apiVersion: aqm/v0.1
+parallel:
+  enabled: true
+  max_workers: 2
+  on_conflict: block
+
+agents:
+  - id: ui_dev
+    runtime: opencode
+    write_scope: ["src/ui/**"]
+```
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `false` | 总开关。关着时完全走原来的串行流程 |
+| `max_workers` | `2` | 一批最多几人；小于 2 直接不并行 |
+| `max_rounds` | `40` | 并行阶段轮数上限 |
+| `on_conflict` | `block` | 轮后审计发现越界/多写时：`block` 让任务失败并写明文件；`warn` 只告警继续；`serialize` 同样只告警（重叠范围在计划阶段就被排开了） |
+| `audit` | `true` | 每轮跑完比对整项目改动 |
+| `audit_max_files` | `4000` | 文件过多时跳过审计并说明 |
+| `checkpoint` | `true` | 轮前把可能被改的文件快照到 `.aqm/checkpoints/<task>/stage-NNN/` |
+| `checkpoint_max_files` | `400` | 单轮快照上限 |
+| `hot_files` | 见下 | 命中就强制串行：`package.json`、各类 lock、`pyproject.toml`、`go.mod`、`.env`、`*.db` 等 |
+
+**设置在任务启动时冻结**到 `metadata._parallel_settings`：运行中改 YAML 不会让同一任务的后续批次换策略。
+
+### 谁能进同一批
+
+每个成员都要过这几关，任何一条不满足就进 `waiting`，并写明原因：
+
+1. 还有待处理的工作块；
+2. 声明了 `write_scope`；
+3. 没配 `gate`、没配 `human_input`（这两类必须串行才能等人）；
+4. 写范围不命中 `hot_files`；
+5. 与已入选成员的写范围**不重叠**；
+6. 未超过 `max_workers`（超了下一轮再来）。
+
+同一批至少要选到 2 人，否则整轮退回串行。
+
+### 写范围
+
+```yaml
+agents:
+  - id: ui_dev
+    runtime: opencode
+    write_scope: ["src/ui/**", "public/ui/*.css"]
+    parallel: true          # false = 即使声明了范围也不参与并行
+```
+
+- 支持 `**`、`*`、`?`；也可以直接写目录（`src/ui` 等价于 `src/ui/**`）。
+- 没写 `write_scope` = 整项目都可能被改 → **永远串行**。
+- 重叠判定双向进行：`src/**` 与 `src/ui/**` 算重叠，`src/ui/**` 与 `src/api/**` 不算。
+
+### 同目录的安全网
+
+并行成员写的是同一个项目目录，所以每轮都做这两件事：
+
+| 机制 | 行为 |
+|---|---|
+| 轮前快照 | 把本轮可能改到的文件复制到 `.aqm/checkpoints/<task>/stage-NNN/`，附 `manifest.json`，不依赖 git 就能回滚 |
+| 轮后审计 | 对整项目做 (size, mtime) 差异比对，逐个检查改动是否落在某个成员的 `write_scope` 内；落在所有范围之外的也算冲突 |
+
+命中冲突时：`on_conflict=block` 让任务直接 `failed`，错误信息写明"多个成员写入了同一文件 / 有文件不在任何成员的写范围内"；`warn` 只写进 `metadata._conflict_log`，并在任务页亮黄条。
+
+### 停顿、暂停与收尾
+
+- **连续 2 轮没有新增完成块** → 置 `metadata._parallel_stalled` 并交回串行，不会空转到 `max_rounds`。
+- **暂停 / 停止**在轮边界生效：当前批次跑完再停，已产出内容不丢。
+- **不重复执行**：并行批次结束后，串行链路走到"块已清空"的成员会直接跳过（记在 `metadata._parallel_covered`），并且只沿**无条件单目标** handoff 继续；条件分支和扇出仍按原规则串行解析。
+
+### 调度说明面板
+
+任务详情 →「工作块」页签顶部。它回答的是"这一轮为什么这样排"：
+
+- 徽章：`并行已开启 · 最多 N 人` / `串行执行 · 并行未开启`；
+- 主卡：最近一次真正运行的批次，列出本轮成员与轮次；
+- 等待列表：每个没进来的成员附一句原因（没写写范围、和谁重叠、命中热文件、配了审批门、已达上限……）；
+- 收尾说明：并行阶段为什么结束（可并行成员不足 2 人、连续两轮无进展、收到停止指令）；
+- 冲突黄条：轮后审计发现越界时列出文件与策略。
+
+记录落在 `metadata._schedule_log`，刷新页面、重启服务后仍在。
+
+### 一个最小示例
+
+```yaml
+apiVersion: aqm/v0.1
+parallel:
+  enabled: true
+  max_workers: 2
+
+agents:
+  - id: architect
+    runtime: claude
+    chunks: { enabled: true, auto_split: true }
+    handoffs:
+      - to: ui_dev
+
+  - id: ui_dev
+    runtime: opencode
+    write_scope: ["src/ui/**"]
+    chunks: { enabled: true, initial: ["实现界面模块"] }
+    handoffs:
+      - to: api_dev
+        condition: always
+
+  - id: api_dev
+    runtime: cline
+    write_scope: ["src/api/**"]
+    chunks: { enabled: true, initial: ["实现接口模块"] }
+    handoffs:
+      - to: qa
+        condition: always
+
+  - id: qa
+    runtime: claude
+```
+
+架构阶段把工作块分给 `ui_dev` 和 `api_dev`（自动拆分时按模块给 owner，也可以像上面这样预置）后，调度器发现两人范围不重叠、又都没配门，于是把他们放进同一批并行写入；两人的块都清空后，串行链路直接跳到 `qa` 验收，不会把两个模块再各跑一遍。
+
+> 注意：`handoffs` 一次连多个目标是**扇出**（额外起子任务），不是并行批次。要让成员同批运行，靠的是"有工作块 + 写范围不重叠"，不是多写几条 handoff。
 
 ---
 
@@ -867,6 +1057,12 @@ default_pipeline: default
 pipeline:
   max_stages: 20          # 单任务最多阶段数，防止死循环
   resident_agents: true   # 复用常驻 CLI 会话
+  parallel:               # 模块并行（默认关闭，见「并行调度」一节）
+    enabled: false
+    max_workers: 2
+    on_conflict: block    # block | warn | serialize
+    audit: true
+    checkpoint: true
 
 # 项目级质量门默认值
 gate:
@@ -1039,7 +1235,9 @@ agents:
 | `context_window` | `int` | `3` | 最近 N 个阶段保留全文，`0` = 全部 |
 | `human_input` | `object` | 无 | `prompt` / `timeout` |
 | `retry` | `object` | 无 | `max_retries` / `backoff` / `fallback_context_strategy` |
-| `chunks` | `object` | 无 | 工作块配置（`enabled` / `initial` / `auto_split` / `enforce` / `retry_limit` / `owner_filter` / `auto_claim` / `max_chunks`） |
+| `chunks` | `object` | 无 | 工作块配置（`enabled` / `initial` / `auto_split` / `enforce` / `retry_limit` / `owner_filter` / `auto_claim` / `max_chunks` / `forward_on_done` / `review_owner` / `max_chunks_per_stage`） |
+| `write_scope` | `list[string]` | `[]` | 该成员允许写的路径 glob（`src/ui/**`）。空 = 整项目，**不参与并行** |
+| `parallel` | `bool` | `true` | 设为 `false` 时即使写了 `write_scope` 也不进并行批次 |
 | `participants` | `list[string]` | `[]` | 仅 `type: session` |
 | `turn_order` | `round_robin` \| `moderator` | `round_robin` | 仅 session |
 | `max_rounds` | `int` | `10` | 仅 session |
@@ -1212,7 +1410,8 @@ agents:
 | `GET` | `/api/pipelines/{name}/yaml` | 原始 YAML |
 | `POST` | `/api/pipelines/default` | 设为默认 |
 | `GET` / `POST` | `/api/pipelines/{name}/agents` | 成员列表 / 新增 |
-| `PUT` / `DELETE` | `/api/pipelines/{name}/agents/{agent_id}` | 修改 / 删除 |
+| `PUT` / `DELETE` | `/api/pipelines/{name}/agents/{agent_id}` | 修改 / 删除（含 `write_scope` / `parallel` / `chunks`） |
+| `GET` / `PUT` | `/api/pipelines/{name}/parallel` | 读取 / 写入该流水线的并行调度设置 |
 | `GET` | `/api/registry/search` | 搜索注册表 |
 | `GET` | `/api/registry/{name}/versions` | 版本列表 |
 | `POST` | `/api/registry/pull` / `publish` | 拉取 / 发布 |
@@ -1248,7 +1447,10 @@ agents:
 | `Daily usage limit exceeded` / `Free usage limit reached` | 模型额度用尽 | 换模型或换运行时；额度重置后再继续（任务可暂停等待） |
 | `Resident session ... exited` | 常驻会话进程退出（超时/崩溃） | aqm 会自动重建并继续；连续失败时看错误里的退出码与命令 |
 | 任务一直「等待审批」 | 任务停在人工门，等你决定 | 打开任务详情「实时输出」或「概览」，或 `GET /api/tasks/{id}/gate` 看具体事项 |
-| 工作块出现多个「进行中」 | 旧版本残留 | 重启服务会自动清扫；也可重跑任务触发阶段开工释放 |
+| 工作块出现多个「进行中」 | 旧版本残留（并行批次期间属正常） | 批次结束会收敛；仍残留就重启服务自动清扫 |
+| 开了并行但还是一个个跑 | 成员没写 `write_scope`、只有 1 人可跑、或写范围重叠/命中热文件 | 看任务页「调度说明」里的等待原因，按提示补 `write_scope` |
+| 任务报「并行写冲突」直接失败 | 有成员写了 `write_scope` 之外的文件，或两人写了同一文件 | 收紧写范围；需要回滚时用 `.aqm/checkpoints/<task>/stage-NNN/` 里的快照 |
+| 人类发言末尾重复几个字 | 旧版打字机切片把尾巴又吐了一遍（已修） | 升级后 Ctrl+F5 强刷页面 |
 | 页面状态不跟着按钮变 | 浏览器缓存了旧脚本 | **Ctrl+F5** 强刷 |
 | 服务重启后任务自己跑起来 | `server.auto_resume: true` | 设 `AQM_DISABLE_AUTO_RESUME=1`，或把 `auto_resume` 设为 `false` |
 | 任务反复自动恢复失败 | 同一阶段 10 分钟内失败 3 次 | 任务会停在 `stalled` 并写明原因，需手动修 |

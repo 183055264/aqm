@@ -41,6 +41,15 @@ from aqm.core.gate import (
     LLMGate,
 )
 from aqm.core.project import get_tasks_dir
+from aqm.core.scheduler import (
+    AgentPlan,
+    audit_changes,
+    copy_checkpoint,
+    diff_snapshot,
+    plan_batch,
+    resolve_parallel_settings,
+    snapshot_scopes,
+)
 from aqm.core.task import StageRecord, Task, TaskStatus
 from aqm.queue.base import AbstractQueue
 from aqm.runtime.base import AbstractRuntime
@@ -351,6 +360,10 @@ class Pipeline:
         self.on_resident_event = on_resident_event
         self._resident_sessions: dict[str, dict[str, Any]] = {}
         self._resident_stop_events: dict[str, threading.Event] = {}
+        # Guards task/stage mutations when a parallel batch appends results from
+        # several worker threads.
+        self._state_lock = threading.RLock()
+        self._active_chunk_ids: set[str] = set()
 
     @property
     def anthropic_client(self):
@@ -823,6 +836,7 @@ class Pipeline:
             for key in (
                 "enabled", "auto_split", "auto_instructions", "enforce",
                 "retry_limit", "owner_filter", "auto_claim", "max_chunks",
+                "forward_on_done", "review_owner", "max_chunks_per_stage",
             ):
                 if key in data and data[key] is not None:
                     raw[key] = data[key]
@@ -1101,6 +1115,17 @@ class Pipeline:
             text += f"\n\n【工作块清单】\n{summary}"
         if settings.get("auto_instructions", True):
             text += chunk_instructions()
+        limit = int(settings.get("max_chunks_per_stage") or 0)
+        if limit == 1:
+            text += (
+                "\n\n【本阶段只做 1 个工作块】完成这一块后立即输出 CHUNK_DONE，"
+                "然后结束本轮，等复核人确认后再继续下一块。"
+            )
+        elif limit > 1:
+            text += (
+                f"\n\n【本阶段最多完成 {limit} 个工作块】超过后请结束本轮，"
+                "剩余的块留给下一轮。"
+            )
         if task is not None:
             text += self._chunk_focus_block(agent, mgr, task)
         return text
@@ -1111,13 +1136,16 @@ class Pipeline:
     ) -> Chunk | None:
         if not settings.get("auto_claim", True):
             return None
-        # A new stage is starting: anything still marked in-progress belongs to
-        # an interrupted previous turn/run, not to a live worker.  Release it
-        # first so at most one block is ever "in progress" per task.
-        for stale in mgr.release_in_progress():
+        # A new serial stage is starting: anything still marked in-progress
+        # belongs to an interrupted previous turn/run, not to a live worker.
+        # Blocks claimed by *currently running* parallel members are protected
+        # by _active_chunk_ids.
+        with self._state_lock:
+            live = set(self._active_chunk_ids)
+        for stale in mgr.release_in_progress(keep=live):
             self._chunk_emit(on_chunk_event, "chunk_update", {
                 "action": "release",
-                "agent_id": agent.id,
+                "agent_id": stale.owner or agent.id,
                 "chunk_id": stale.id,
                 "chunk": stale.model_dump(mode="json"),
                 "reason": "上一阶段未完成，已释放为待处理",
@@ -1145,6 +1173,666 @@ class Pipeline:
                 if c.owner == agent.id and c.status.value != "done"
             ]
         return [c for c in chunks if c.status.value != "done"]
+
+    # ── Parallel scheduling ───────────────────────────────────────────
+
+    def _covered_chain_next(
+        self,
+        task: Task,
+        agent: AgentDefinition,
+        chunk_mgr: ChunkManager,
+    ) -> tuple[str, str] | None:
+        """Shortcut the serial chain through members a parallel batch drained.
+
+        Returns ``(next_agent_id, payload)`` — with an empty id meaning \"the
+        chain ends here\" — or ``None`` when the normal serial path must run.
+        Only unconditional single-target handoffs are followed so conditional
+        or fan-out routing is never guessed.
+        """
+        covered = set(task.metadata.get("_parallel_covered") or [])
+        if agent.id not in covered:
+            return None
+        settings = self._chunk_settings(agent)
+        if settings.get("enabled", True) and self._chunk_pending_for(
+            agent, chunk_mgr, settings
+        ):
+            return None  # work reappeared: run this member normally
+
+        payload_text = (
+            f"[并行阶段已完成 {agent.id} 的全部工作块] "
+            "请继续后续工作。"
+        )
+        current = agent
+        seen = {agent.id}
+        while current.id in covered:
+            handoffs = current.handoffs or []
+            if len(handoffs) != 1:
+                return None
+            handoff = handoffs[0]
+            if handoff.condition != "always" or "," in handoff.to:
+                return None
+            target_id = handoff.to.strip()
+            if not target_id:
+                return ("", payload_text)
+            if target_id in seen:
+                return None
+            seen.add(target_id)
+            target = self.agents.get(target_id)
+            if target is None:
+                return None
+            if target_id not in covered:
+                return (target_id, payload_text)
+            target_settings = self._chunk_settings(target)
+            if target_settings.get("enabled", True) and self._chunk_pending_for(
+                target, chunk_mgr, target_settings
+            ):
+                return (target_id, payload_text)
+            current = target
+        return None
+
+    def _parallel_settings_for(self, task: Task) -> dict:
+        """Effective parallel settings, frozen on the task at creation."""
+        stored = task.metadata.get("_parallel_settings")
+        if isinstance(stored, dict) and stored:
+            return resolve_parallel_settings(stored)
+        try:
+            from aqm.core.project import resolve_parallel_settings as _resolve
+
+            return _resolve(
+                self.project_root,
+                task.metadata.get("pipeline"),
+                self.config,
+            )
+        except Exception:  # noqa: BLE001 - scheduling must never block a run
+            logger.warning("[Pipeline] could not resolve parallel settings", exc_info=True)
+            return resolve_parallel_settings(
+                (self.config.pipeline or {}).get("parallel") or {}
+            )
+
+    def _parallel_candidates(
+        self, task: Task, chunk_mgr: ChunkManager
+    ) -> list[AgentPlan]:
+        plans: list[AgentPlan] = []
+        for agent_id, agent in self.agents.items():
+            if agent.type != "agent":
+                continue
+            if getattr(agent, "parallel", None) is False:
+                continue
+            if not getattr(agent, "write_scope", None):
+                continue  # no declared scope => serial only
+            settings = self._chunk_settings(agent)
+            if not settings.get("enabled", True):
+                continue
+            if not settings.get("owner_filter", True):
+                continue
+            pending = self._chunk_pending_for(agent, chunk_mgr, settings)
+            if not pending:
+                continue
+            plans.append(AgentPlan(
+                agent_id=agent_id,
+                scopes=list(agent.write_scope),
+                pending=len(pending),
+                has_gate=agent.gate is not None,
+                has_human_input=bool(
+                    agent.human_input and agent.human_input.enabled
+                ),
+            ))
+        return plans
+
+    def _record_schedule_decision(
+        self, task: Task, decision, on_chunk_event=None, note: str = ""
+    ) -> None:
+        entry = decision.as_dict()
+        entry["at"] = datetime.now(timezone.utc).isoformat()
+        if note:
+            entry["notes"].append(note)
+        log = task.metadata.setdefault("_schedule_log", [])
+        log.append(entry)
+        if len(log) > 20:
+            del log[:-20]
+        task.metadata["_last_schedule_decision"] = entry
+        self._chunk_emit(on_chunk_event, "schedule_decision", entry)
+
+    @staticmethod
+    def _wrap_agent_cb(fn, agent_id: str):
+        """Bind an agent id to stream callbacks that support it."""
+        if fn is None:
+            return None
+        try:
+            params = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            return fn
+        if "agent_id" in params:
+            return lambda *args, **kwargs: fn(*args, agent_id=agent_id, **kwargs)
+        return fn
+
+    def _build_parallel_prompt(
+        self,
+        task: Task,
+        agent: AgentDefinition,
+        input_text: str,
+        ctx_file: ContextFile,
+        chunk_mgr: ChunkManager,
+        settings: dict,
+        peers: list[str],
+    ) -> str:
+        owner = agent.id if settings.get("owner_filter", True) else None
+        chunk_text = chunk_mgr.summary(owner=owner)
+        context_text = ctx_file.read_for_strategy(
+            agent.id, agent.context_strategy, agent.context_window,
+        )
+        prompt = build_prompt(
+            system_prompt_template=agent.system_prompt,
+            input_text=input_text,
+            context=context_text,
+            chunks=chunk_text,
+        )
+        prompt += self._chunk_prompt_suffix(
+            agent, chunk_mgr, settings,
+            include_summary="{{ chunks" not in agent.system_prompt,
+            task=task,
+        )
+        prompt = self._apply_directives(prompt, task)
+        others = [peer for peer in peers if peer != agent.id]
+        if others:
+            prompt += (
+                "\n\n【并行协作提示】\n"
+                f"以下成员正在同时修改项目的其他目录：{', '.join(others)}。\n"
+                "只修改你写范围内（write_scope）的文件；不要改动其他人的目录，"
+                "也不要修改共享的锁文件/清单文件。完成后输出对应工作块的 CHUNK_DONE。\n"
+            )
+        limit = int(settings.get("max_chunks_per_stage") or 0)
+        if limit == 1:
+            prompt += (
+                "\n【本轮只做 1 个块】完成一个工作块后立即输出 CHUNK_DONE，"
+                "然后结束本轮。\n"
+            )
+        elif limit > 1:
+            prompt += (
+                f"\n【本轮最多完成 {limit} 个工作块】超过后请结束本轮，"
+                "剩余块留给下一轮。\n"
+            )
+        return prompt
+
+    def _run_parallel_turn(
+        self,
+        task: Task,
+        agent: AgentDefinition,
+        settings: dict,
+        chunk_mgr: ChunkManager,
+        ctx_file: ContextFile,
+        stage_number: int,
+        input_text: str,
+        peers: list[str],
+        on_output=None,
+        on_thinking=None,
+        on_tool=None,
+        on_chunk_event=None,
+        on_stage_start=None,
+    ) -> tuple[StageRecord, str, str | None]:
+        """Run one member's turn for one work block (called in a worker thread)."""
+        chunk = None
+        if settings.get("auto_claim", True):
+            chunk = chunk_mgr.claim_next(agent.id)
+            if chunk is not None:
+                with self._state_lock:
+                    self._active_chunk_ids.add(chunk.id)
+                self._chunk_emit(on_chunk_event, "chunk_update", {
+                    "action": "start",
+                    "agent_id": agent.id,
+                    "chunk_id": chunk.id,
+                    "chunk": chunk.model_dump(mode="json"),
+                    "progress": chunk_mgr.progress(),
+                })
+
+        prompt = self._build_parallel_prompt(
+            task, agent, input_text, ctx_file, chunk_mgr, settings, peers,
+        )
+        if on_stage_start:
+            try:
+                on_stage_start(task, agent.id, stage_number)
+            except Exception:  # noqa: BLE001 - UI callbacks must not break a run
+                logger.exception("[Pipeline] parallel stage_start callback failed")
+
+        stage = StageRecord(
+            stage_number=stage_number,
+            agent_id=agent.id,
+            task_name="parallel",
+            input_text=input_text,
+        )
+        output = ""
+        error: str | None = None
+        attempts = 1 + (agent.retry.max_retries if agent.retry else 0)
+        for attempt in range(1, attempts + 1):
+            try:
+                output = self._execute_agent(
+                    prompt,
+                    agent,
+                    task,
+                    on_output=self._wrap_agent_cb(on_output, agent.id),
+                    on_thinking=self._wrap_agent_cb(on_thinking, agent.id),
+                    on_tool=self._wrap_agent_cb(on_tool, agent.id),
+                    interruptible=False,
+                )
+                stage.retry_count = attempt - 1
+                break
+            except Exception as exc:  # noqa: BLE001 - recorded and reported
+                error = str(exc)
+                if attempt < attempts:
+                    backoff = agent.retry.backoff if agent.retry else 0
+                    if backoff:
+                        _time.sleep(backoff)
+                    continue
+                stage.retry_count = attempt - 1
+                stage.retry_reason = error
+                stage.output_text = f"ERROR: {error}"
+                stage.finished_at = datetime.now(timezone.utc)
+                if chunk is not None:
+                    try:
+                        chunk_mgr.update(chunk.id, status=ChunkStatus.pending)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("[Pipeline] could not release %s", chunk.id)
+                    with self._state_lock:
+                        self._active_chunk_ids.discard(chunk.id)
+                return stage, "", error
+
+        if settings.get("auto_claim", True) and chunk is not None:
+            with self._state_lock:
+                try:
+                    chunk_mgr.log_directives(agent.id, stage_number, output)
+                    actions = parse_chunk_directives(output, chunk_mgr, agent.id)
+                except Exception:  # noqa: BLE001 - directives must not break the turn
+                    logger.exception("[Pipeline] chunk directive parsing failed")
+                    actions = []
+            for action in actions:
+                self._chunk_emit(on_chunk_event, "chunk_update", action)
+            output = sanitize_chunk_directives(output)
+            with self._state_lock:
+                self._update_chunk_metadata(task, chunk_mgr)
+                still = chunk_mgr.get(chunk.id)
+                if still is not None and still.status == ChunkStatus.in_progress:
+                    # The member did not finish this block in its turn: release it
+                    # so a later round (or the serial fallback) can retry it.
+                    chunk_mgr.update(chunk.id, status=ChunkStatus.pending)
+                self._active_chunk_ids.discard(chunk.id)
+
+        stage.output_text = output
+        stage.finished_at = datetime.now(timezone.utc)
+        return stage, output, None
+
+    def _done_chunk_count(self, chunk_mgr: ChunkManager) -> int:
+        return sum(
+            1 for chunk in chunk_mgr.load().chunks
+            if chunk.status == ChunkStatus.done
+        )
+
+    def _run_parallel_round(
+        self,
+        task: Task,
+        agents_to_run: list[str],
+        settings: dict,
+        chunk_mgr: ChunkManager,
+        ctx_file: ContextFile,
+        input_text: str,
+        on_output=None,
+        on_thinking=None,
+        on_tool=None,
+        on_chunk_event=None,
+        on_stage_start=None,
+        on_stage_complete=None,
+    ) -> bool:
+        """Run one turn for each selected member, concurrently.
+
+        Returns True when at least one turn produced a result.
+        """
+        scopes_by_agent = {
+            agent_id: list(self.agents[agent_id].write_scope or [])
+            for agent_id in agents_to_run
+        }
+        before: dict[str, tuple[int, int]] | None = {}
+        if settings.get("audit", True):
+            # The audit must see writes *outside* every declared scope too,
+            # otherwise an undeclared change could never be reported.
+            before = snapshot_scopes(
+                self.project_root,
+                ["**"],
+                max_files=int(settings.get("audit_max_files") or 4000),
+            )
+
+        base_stage = task.next_stage_number
+        if settings.get("checkpoint", True):
+            union = [scope for scopes in scopes_by_agent.values() for scope in scopes]
+            info = copy_checkpoint(
+                self.project_root,
+                union,
+                self.project_root
+                / ".aqm"
+                / "checkpoints"
+                / task.id
+                / f"stage-{base_stage:03d}",
+                max_files=int(settings.get("checkpoint_max_files") or 400),
+            )
+            if info.get("ok"):
+                task.metadata["_last_checkpoint"] = info["dir"]
+            else:
+                self._chunk_emit(on_chunk_event, "schedule_note", {
+                    "note": f"并行快照已跳过：{info.get('reason')}",
+                })
+
+        results: dict[str, tuple[StageRecord, str, str | None]] = {}
+        with ThreadPoolExecutor(max_workers=len(agents_to_run)) as pool:
+            futures = {}
+            for offset, agent_id in enumerate(agents_to_run):
+                agent = self.agents[agent_id]
+                agent_input = input_text
+                if agent_id != task.current_agent_id:
+                    agent_input = task.description
+                futures[pool.submit(
+                    self._run_parallel_turn,
+                    task, agent, self._chunk_settings(agent), chunk_mgr, ctx_file,
+                    base_stage + offset, agent_input, agents_to_run,
+                    on_output, on_thinking, on_tool, on_chunk_event, on_stage_start,
+                )] = agent_id
+            for future in as_completed(futures):
+                agent_id = futures[future]
+                try:
+                    results[agent_id] = future.result()
+                except Exception as exc:  # noqa: BLE001 - keep other workers alive
+                    logger.exception(
+                        "[Pipeline] parallel turn for %s crashed", agent_id
+                    )
+                    stage = StageRecord(
+                        stage_number=base_stage + agents_to_run.index(agent_id),
+                        agent_id=agent_id,
+                        task_name="parallel",
+                        output_text=f"ERROR: {exc}",
+                        finished_at=datetime.now(timezone.utc),
+                    )
+                    results[agent_id] = (stage, "", str(exc))
+
+        if not results:
+            return False
+
+        ordered = [results[agent_id] for agent_id in agents_to_run if agent_id in results]
+        with self._state_lock:
+            for stage, _output, _error in ordered:
+                task.add_stage(stage)
+            self.queue.update(task)
+
+        for stage, output, error in ordered:
+            try:
+                ctx_file.append_stage(
+                    stage_number=stage.stage_number,
+                    agent_id=stage.agent_id,
+                    task_name="parallel",
+                    status="failed" if error else "completed",
+                    input_text=stage.input_text,
+                    output_text=stage.output_text,
+                )
+            except Exception:  # noqa: BLE001 - context bookkeeping is best-effort
+                logger.exception("[Pipeline] could not append parallel stage")
+            if on_stage_complete:
+                try:
+                    on_stage_complete(task, stage)
+                except Exception:  # noqa: BLE001
+                    logger.exception("[Pipeline] parallel stage_complete callback failed")
+
+        errors = {aid: err for aid, (_, _, err) in results.items() if err}
+        if errors:
+            agent_id = next(iter(errors))
+            task.status = TaskStatus.failed
+            task.metadata["error"] = (
+                f"Parallel turn failed for {agent_id}: {errors[agent_id]}"
+            )
+            self.queue.update(task)
+            return True
+
+        self._audit_parallel_round(
+            task, settings, scopes_by_agent, before, on_chunk_event,
+        )
+        return True
+
+    def _audit_parallel_round(
+        self,
+        task: Task,
+        settings: dict,
+        scopes_by_agent: dict[str, list[str]],
+        before: dict[str, tuple[int, int]] | None,
+        on_chunk_event=None,
+    ) -> None:
+        if settings.get("audit", True) is False or before is None:
+            if settings.get("audit", True):
+                self._chunk_emit(on_chunk_event, "schedule_note", {
+                    "note": "文件审计已跳过（文件过多无法比对）",
+                })
+            return
+        after = snapshot_scopes(
+            self.project_root, ["**"],
+            max_files=int(settings.get("audit_max_files") or 4000),
+        )
+        changed = diff_snapshot(before, after)
+        if not changed:
+            return
+        conflicts, unclaimed = audit_changes(scopes_by_agent, changed)
+        if conflicts or unclaimed:
+            payload = {
+                "conflicts": conflicts[:20],
+                "unclaimed": unclaimed[:20],
+                "changed": len(changed),
+                "policy": settings.get("on_conflict"),
+            }
+            self._chunk_emit(on_chunk_event, "parallel_conflict", payload)
+            log = task.metadata.setdefault("_conflict_log", [])
+            log.append(payload)
+            if settings.get("on_conflict") == "block":
+                task.status = TaskStatus.failed
+                parts = []
+                if conflicts:
+                    parts.append(
+                        "多个成员写入了同一文件："
+                        + ", ".join(item["path"] for item in conflicts[:5])
+                    )
+                if unclaimed:
+                    parts.append(
+                        "有文件不在任何成员的写范围内："
+                        + ", ".join(unclaimed[:5])
+                    )
+                task.metadata["error"] = "并行写冲突 — " + "；".join(parts)
+                self.queue.update(task)
+
+    def _review_step(
+        self,
+        task: Task,
+        agent: AgentDefinition,
+        chunk_actions: list[dict],
+        chunk_mgr: ChunkManager | None,
+    ) -> tuple[str, str] | None:
+        """Decide the next hop for the block-level review loop.
+
+        Returns ``(next_agent_id, payload)`` when the loop owns the next step,
+        or ``None`` to let the normal handoff rules decide.
+        """
+        if chunk_mgr is None:
+            return None
+        settings = self._chunk_settings(agent)
+        loop = task.metadata.get("_chunk_review")
+        if isinstance(loop, dict) and loop.get("reviewer") == agent.id:
+            owner = str(loop.get("owner") or "")
+            rejected = [
+                action for action in chunk_actions
+                if action.get("action") == "reject"
+            ]
+            owner_pending = [
+                chunk for chunk in chunk_mgr.load().chunks
+                if chunk.owner == owner and chunk.status != ChunkStatus.done
+            ]
+            if rejected:
+                first = rejected[0]
+                chunk_id = str(first.get("chunk_id") or "")
+                issue = str(first.get("reason") or "复核未通过")
+                return owner, (
+                    f"[块级复核退回] {chunk_id}：{issue}\n"
+                    f"请按上面的意见修改 {chunk_id}，改完后输出 CHUNK_DONE: {chunk_id}。"
+                )
+            if owner_pending:
+                nxt = owner_pending[0]
+                return owner, (
+                    f"[块级复核通过] 继续处理 {nxt.id}：{nxt.description}\n"
+                    "完成这一块后输出 CHUNK_DONE，我再复核下一块。"
+                )
+            task.metadata.pop("_chunk_review", None)
+            return None
+
+        if not settings.get("enabled", True):
+            return None
+        if not settings.get("forward_on_done"):
+            return None
+        reviewer = str(settings.get("review_owner") or "").strip()
+        if not reviewer or reviewer == agent.id or reviewer not in self.agents:
+            return None
+
+        owned_done: list[Chunk] = []
+        for action in chunk_actions:
+            if action.get("action") != "done" or action.get("agent_id") != agent.id:
+                continue
+            chunk = chunk_mgr.get(str(action.get("chunk_id") or ""))
+            if chunk is None or chunk.owner != agent.id:
+                continue
+            owned_done.append(chunk)
+        if not owned_done:
+            return None
+
+        task.metadata["_chunk_review"] = {"owner": agent.id, "reviewer": reviewer}
+        remaining = [
+            chunk for chunk in chunk_mgr.load().chunks
+            if chunk.owner == agent.id and chunk.status != ChunkStatus.done
+        ]
+        lines = "\n".join(
+            f"- {chunk.id}：{chunk.description}" for chunk in owned_done
+        )
+        payload = (
+            f"[块级复核请求] 成员 {agent.id} 完成了工作块：\n{lines}\n\n"
+            "请检查这些改动是否满足要求：通过就继续等待，"
+            "发现问题就输出 CHUNK_REJECT: <编号> 问题说明 退回给原成员。"
+        )
+        if remaining:
+            payload += f"\n该成员还有 {len(remaining)} 个工作块未完成。"
+        return reviewer, payload
+
+    def _run_parallel_phase(
+        self,
+        task: Task,
+        ctx_file: ContextFile,
+        chunk_mgr: ChunkManager,
+        on_output=None,
+        on_thinking=None,
+        on_tool=None,
+        on_chunk_event=None,
+        on_stage_start=None,
+        on_stage_complete=None,
+    ) -> None:
+        """Run rounds of independent members until fewer than two are ready.
+
+        Parallelism is opt-in (``parallel.enabled``); when disabled this is a
+        no-op and the serial stage flow is untouched.  Each round re-plans from
+        the live chunk list, so a member that finishes leaves the batch and the
+        next round picks up whoever is still ready.
+        """
+        settings = self._parallel_settings_for(task)
+        if not settings.get("enabled"):
+            return
+        max_workers = int(settings.get("max_workers") or 2)
+        if max_workers < 2:
+            return
+
+        max_rounds = int(settings.get("max_rounds") or 40)
+        with self._state_lock:
+            live = set(self._active_chunk_ids)
+        for stale in chunk_mgr.release_in_progress(keep=live):
+            self._chunk_emit(on_chunk_event, "chunk_update", {
+                "action": "release",
+                "agent_id": stale.owner,
+                "chunk_id": stale.id,
+                "chunk": stale.model_dump(mode="json"),
+                "reason": "上一轮未完成，已释放为待处理",
+                "progress": chunk_mgr.progress(),
+            })
+        last_done = self._done_chunk_count(chunk_mgr)
+        stalled = 0
+        for round_number in range(1, max_rounds + 1):
+            if is_cancelled(task.id) or not wait_while_paused(task.id):
+                return
+
+            plans = self._parallel_candidates(task, chunk_mgr)
+            decision = plan_batch(
+                plans,
+                max_workers=max_workers,
+                hot_files=settings.get("hot_files") or (),
+                on_conflict=str(settings.get("on_conflict") or "block"),
+                round_number=round_number,
+            )
+            if len(decision.selected) < 2:
+                if round_number > 1 or decision.waiting:
+                    self._record_schedule_decision(
+                        task, decision, on_chunk_event,
+                        note="并行阶段结束：可同时运行的成员不足 2 人，剩余工作交回串行流程",
+                    )
+                return
+
+            self._record_schedule_decision(task, decision, on_chunk_event)
+            self._run_parallel_round(
+                task, decision.selected, settings, chunk_mgr, ctx_file,
+                task.description,
+                on_output=on_output,
+                on_thinking=on_thinking,
+                on_tool=on_tool,
+                on_chunk_event=on_chunk_event,
+                on_stage_start=on_stage_start,
+                on_stage_complete=on_stage_complete,
+            )
+            if task.status in (TaskStatus.failed, TaskStatus.cancelled):
+                return
+
+            if is_cancelled(task.id):
+                # Stop was pressed mid-batch: the running turns finished, so
+                # report the cancellation now instead of starting another round.
+                with _cancel_lock:
+                    _cancelled_tasks.discard(task.id)
+                task.status = TaskStatus.cancelled
+                task.metadata["cancel_reason"] = "Cancelled during parallel batch"
+                self._release_chunks_on_finish(task)
+                self.queue.update(task)
+                self._chunk_emit(on_chunk_event, "schedule_note", {
+                    "note": "已收到停止指令，并行批次在本轮结束后停止",
+                })
+                return
+
+            covered = task.metadata.setdefault("_parallel_covered", [])
+            for agent_id in decision.selected:
+                member = self.agents.get(agent_id)
+                if member is None or agent_id in covered:
+                    continue
+                member_settings = self._chunk_settings(member)
+                if member_settings.get("enabled", True) and not self._chunk_pending_for(
+                    member, chunk_mgr, member_settings
+                ):
+                    covered.append(agent_id)
+
+            done = self._done_chunk_count(chunk_mgr)
+            if done <= last_done:
+                stalled += 1
+                self._chunk_emit(on_chunk_event, "schedule_note", {
+                    "note": (
+                        "本轮并行没有新增完成的工作块，"
+                        f"连续 {stalled} 轮；再有一次就交回串行流程"
+                    ),
+                })
+                if stalled >= 2:
+                    task.metadata["_parallel_stalled"] = True
+                    return
+            else:
+                stalled = 0
+                last_done = done
 
     def _take_pending_notes(self, task: Task) -> list[str]:
         """Drain notes submitted from the web UI (live buffer + persisted)."""
@@ -1424,6 +2112,34 @@ class Pipeline:
                 current_agent_id = next_agent_id
                 continue
 
+            # ── Members already drained by a parallel batch ──
+            # The batch may have finished every block of a member the serial
+            # handoff was about to route to.  Re-running it would duplicate
+            # work, so shortcut through the covered members.  Only plain
+            # single-target handoffs are followed: a conditional or fan-out
+            # chain keeps its normal serial behaviour.
+            if has_chunks and agent.type == "agent":
+                shortcut = self._covered_chain_next(task, agent, chunk_mgr)
+                if shortcut is not None:
+                    next_agent_id, next_payload = shortcut
+                    self._chunk_emit(on_chunk_event, "schedule_note", {
+                        "note": (
+                            f"{agent.id} 的工作块已在并行阶段完成，"
+                            f"跳过串行复跑，直接交给 {next_agent_id}"
+                        ),
+                    })
+                    if not next_agent_id:
+                        task.status = TaskStatus.completed
+                        self._release_chunks_on_finish(task)
+                        self.queue.update(task)
+                        ctx_file.cleanup_snapshots()
+                        logger.info(f"[Pipeline] {task.id} completed")
+                        return task
+                    ctx_file.save_payload(next_payload)
+                    current_input = next_payload
+                    current_agent_id = next_agent_id
+                    continue
+
             # ── Regular agent execution ──
             ctx_file.snapshot_before_stage(task.next_stage_number)
             logger.info(
@@ -1519,6 +2235,7 @@ class Pipeline:
             interjection_rounds = 0
             max_interjection_rounds = 8
             chunk_retries = 0
+            chunk_actions: list[dict] = []
 
             while True:
                 interrupted = False
@@ -1705,6 +2422,7 @@ class Pipeline:
                     if stage_has_chunks:
                         chunk_mgr.log_directives(agent.id, stage.stage_number, output)
                         actions = parse_chunk_directives(output, chunk_mgr, agent.id)
+                        chunk_actions.extend(actions)
                         for action in actions:
                             self._chunk_emit(
                                 on_chunk_event, "chunk_update", action
@@ -1726,6 +2444,14 @@ class Pipeline:
                         )
                         mode = agent_chunk_settings.get("enforce", "retry")
                         limit = int(agent_chunk_settings.get("retry_limit", 2))
+                        # With one block per turn plus an immediate reviewer, the
+                        # review loop (not the retry budget) decides the next turn.
+                        if (
+                            agent_chunk_settings.get("forward_on_done")
+                            and int(agent_chunk_settings.get("max_chunks_per_stage") or 0) <= 1
+                            and mode == "retry"
+                        ):
+                            mode = "warn"
                         if pending and mode == "fail":
                             stage.finished_at = datetime.now(timezone.utc)
                             task.add_stage(stage)
@@ -1921,10 +2647,37 @@ class Pipeline:
             if on_stage_complete:
                 on_stage_complete(task, stage)
 
+            # ── Block-level review handoff ────────────────────────────
+            # Owner finishes one block -> reviewer looks at it -> reviewer either
+            # approves (owner continues with the next block) or rejects and the
+            # block goes back to the owner with the issue attached.
+            review_next = self._review_step(task, agent, chunk_actions, chunk_mgr)
+
+            # ── Parallel module phase ─────────────────────────────────
+            # Only runs when the block-level review loop is idle, so reviews
+            # stay strictly ordered while independent modules can overlap.
+            if review_next is None and has_chunks and chunk_mgr is not None:
+                self._run_parallel_phase(
+                    task, ctx_file, chunk_mgr,
+                    on_output=on_output,
+                    on_thinking=on_thinking,
+                    on_tool=on_tool,
+                    on_chunk_event=on_chunk_event,
+                    on_stage_start=on_stage_start,
+                    on_stage_complete=on_stage_complete,
+                )
+                if task.status == TaskStatus.failed:
+                    self._release_chunks_on_finish(task)
+                    self.queue.update(task)
+                    return task
+
             # Handoff
-            handoff_targets = self._resolve_handoffs(
-                agent, gate_result, output, current_input
-            )
+            if review_next is not None:
+                handoff_targets = [review_next]
+            else:
+                handoff_targets = self._resolve_handoffs(
+                    agent, gate_result, output, current_input
+                )
 
             if not handoff_targets:
                 task.status = TaskStatus.completed

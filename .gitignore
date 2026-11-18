@@ -13,3 +13,7 @@ venv/
 .aqm/meetings/
 meeting.md
 .aqm/restart.log
+
+# 仓库只随附 default-4.yaml；其余模板属于本机，不参与发布
+templates/*.yaml
+!templates/default-4.yaml

@@ -136,6 +136,65 @@ class TestHTMLPages:
         # The sticky "current member" bar must follow the light/dark theme.
         assert "background: var(--overlay-bg);" in r.text
         assert "--overlay-bg: rgba(246, 248, 250, .95)" in r.text
+        # Scheduling explanation panel sits above the work-block list.
+        assert "调度说明" in r.text
+        assert "并行未开启" in r.text
+
+    def test_pipeline_parallel_settings_round_trip(self, client):
+        r = client.get("/api/pipelines/default/parallel")
+        assert r.status_code == 200
+        assert r.json()["enabled"] is False
+
+        r = client.put(
+            "/api/pipelines/default/parallel",
+            json={"enabled": True, "max_workers": 3, "on_conflict": "warn",
+                  "audit": True, "hot_files": ["package.json"]},
+        )
+        assert r.status_code == 200
+        data = client.get("/api/pipelines/default/parallel").json()
+        assert data["enabled"] is True
+        assert data["max_workers"] == 3
+        assert data["on_conflict"] == "warn"
+
+        client.put(
+            "/api/pipelines/default/parallel",
+            json={"enabled": False, "max_workers": 2, "on_conflict": "block"},
+        )
+        assert client.get("/api/pipelines/default/parallel").json()["enabled"] is False
+
+    def test_agent_write_scope_and_block_review_round_trip(self, client):
+        body = {
+            "id": "ui_dev",
+            "name": "UI Dev",
+            "runtime": "claude",
+            "system_prompt": "Build {{ input }}",
+            "write_scope": ["src/ui/**"],
+            "chunks": {
+                "enabled": True,
+                "auto_split": False,
+                "forward_on_done": True,
+                "review_owner": "reviewer",
+                "max_chunks_per_stage": 1,
+            },
+        }
+        assert client.post("/api/pipelines/default/agents", json=body).status_code == 200
+        agents = client.get("/api/pipelines/default/agents").json()
+        created = next(item for item in agents if item["id"] == "ui_dev")
+        assert created["write_scope"] == ["src/ui/**"]
+        assert created["chunks"]["forward_on_done"] is True
+        assert created["chunks"]["max_chunks_per_stage"] == 1
+
+        body["write_scope"] = []
+        body["chunks"] = {"enabled": True, "auto_split": False}
+        assert client.put(
+            "/api/pipelines/default/agents/ui_dev", json=body
+        ).status_code == 200
+        updated = next(
+            item for item in client.get("/api/pipelines/default/agents").json()
+            if item["id"] == "ui_dev"
+        )
+        assert updated["write_scope"] == []
+        assert "forward_on_done" not in (updated["chunks"] or {})
 
     def test_task_detail_not_found(self, client):
         r = client.get("/tasks/T-NONEXISTENT")

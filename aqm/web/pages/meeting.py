@@ -1005,8 +1005,12 @@ function _typeNext() {
   const step = Math.max(8, Math.floor(total / 200));
   let idx = 0;
   function tick() {
+    // Slice from the previous index, not idx - step: the final step is
+    // clamped to `total`, so `idx - step` would re-emit the last few
+    // characters and duplicate the tail of every speech.
+    const start = idx;
     idx = Math.min(total, idx + step);
-    target.textContent += text.slice(Math.max(0, idx - step), idx);
+    target.textContent += text.slice(start, idx);
     if (head && idx >= Math.min(headText.length, step)) {
       // The header is short; reveal it with the first chunk of the body.
       head.textContent = headText;

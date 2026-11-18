@@ -150,7 +150,7 @@ agents:
 ### 2. 安装 aqm
 
 ```bash
-git clone https://github.com/aqm-framework/aqm.git
+git clone https://github.com/183055264/aqm.git
 cd aqm
 python -m venv ../venv
 
@@ -162,6 +162,8 @@ python -m venv ../venv
 pip install -e ".[serve,dev]"
 aqm --version
 ```
+
+> 本仓库是 [aqm-framework/aqm](https://github.com/aqm-framework/aqm) 的扩展分支，额外包含团队模板、模块并行调度与块级复核交接。想装官方原版，把上面的地址换成 `https://github.com/aqm-framework/aqm.git` 即可。
 
 输出：
 

@@ -565,9 +565,10 @@ _CHUNK_DONE_RE = re.compile(r"CHUNK_DONE:\s*(.+)", re.IGNORECASE)
 _CHUNK_START_RE = re.compile(r"CHUNK_START:\s*(\S+)", re.IGNORECASE)
 _CHUNK_BLOCK_RE = re.compile(r"CHUNK_BLOCK:\s*(\S+)\s*(.*)", re.IGNORECASE)
 _CHUNK_REMOVE_RE = re.compile(r"CHUNK_REMOVE:\s*(\S+)", re.IGNORECASE)
+_CHUNK_REJECT_RE = re.compile(r"CHUNK_REJECT:\s*(\S+)\s*(.*)", re.IGNORECASE)
 _CHUNK_ID_RE = re.compile(r"C-\d+", re.IGNORECASE)
 _DIRECTIVE_RE = re.compile(
-    r"\s*CHUNK_(?:ADD|DONE|START|BLOCK|REMOVE):[^\n]*", re.IGNORECASE
+    r"\s*CHUNK_(?:ADD|DONE|START|BLOCK|REMOVE|REJECT):[^\n]*", re.IGNORECASE
 )
 _CHUNK_TAG_RE = re.compile(r"\[(owner|phase)\s*=\s*([^\]]+)\]", re.IGNORECASE)
 
@@ -655,6 +656,21 @@ def parse_chunk_directives(
         else:
             logger.warning("[ChunkDirective] CHUNK_REMOVE: %s not found", chunk_id)
 
+    for match in _CHUNK_REJECT_RE.finditer(message):
+        chunk_id = match.group(1).strip().rstrip(".,;:").upper()
+        issue = match.group(2).strip() or "复核未通过，请修改后重新提交"
+        # A reviewer sends the block back to its owner instead of deleting it.
+        ok = chunk_mgr.update(
+            chunk_id, status=ChunkStatus.pending, note=issue, completed_by=""
+        )
+        if ok is not None:
+            push(
+                "reject", chunk_mgr.get(chunk_id), chunk_id=chunk_id,
+                reason=issue, reviewer=agent_id,
+            )
+        else:
+            logger.warning("[ChunkDirective] CHUNK_REJECT: %s not found", chunk_id)
+
     return actions
 
 
@@ -666,6 +682,7 @@ def chunk_instructions() -> str:
         "- 开始做某块时输出：CHUNK_START: C-001\n"
         "- 完成某块时输出：CHUNK_DONE: C-001（可一次写多个，如 CHUNK_DONE: C-001 C-002）\n"
         "- 遇到阻塞无法继续时输出：CHUNK_BLOCK: C-001 原因\n"
+        "- 复核不通过时输出：CHUNK_REJECT: C-001 问题说明（交回原成员修改）\n"
         "- 需要补充新块时输出：CHUNK_ADD: 描述 [owner=成员ID] [phase=阶段]\n"
         "- 上述指令行不会展示给用户，请正常输出正文。\n"
         "════════ 工作块协议结束 ════════"
@@ -706,6 +723,10 @@ DEFAULT_CHUNK_SETTINGS: dict[str, Any] = {
     "retry_limit": 2,
     "owner_filter": True,
     "auto_claim": True,
+    # Immediate per-block review handoff.
+    "forward_on_done": False,
+    "review_owner": "",
+    "max_chunks_per_stage": 0,   # 0 = unlimited
     "max_chunks": 30,
     "min_description_chars": 800,
     "requirements_max_chars": 24000,
@@ -740,4 +761,12 @@ def resolve_chunk_settings(raw: dict | None) -> dict[str, Any]:
         settings["max_chunks"] = max(1, int(settings.get("max_chunks", 30)))
     except (TypeError, ValueError):
         settings["max_chunks"] = 30
+    try:
+        settings["max_chunks_per_stage"] = max(
+            0, int(settings.get("max_chunks_per_stage") or 0)
+        )
+    except (TypeError, ValueError):
+        settings["max_chunks_per_stage"] = 0
+    settings["forward_on_done"] = bool(settings.get("forward_on_done"))
+    settings["review_owner"] = str(settings.get("review_owner") or "").strip()
     return settings

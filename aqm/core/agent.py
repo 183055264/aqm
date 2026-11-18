@@ -119,6 +119,11 @@ class ChunksConfig(BaseModel):
     retry_limit: Optional[int] = None
     owner_filter: Optional[bool] = None
     auto_claim: Optional[bool] = None
+    # Finish one block, then hand it to ``review_owner`` before continuing.
+    forward_on_done: Optional[bool] = None
+    review_owner: Optional[str] = None
+    # How many blocks a single turn may work on (0 = no limit).
+    max_chunks_per_stage: Optional[int] = None
 
 
 class RetryConfig(BaseModel):
@@ -178,6 +183,13 @@ class AgentDefinition(BaseModel):
     retry: Optional[RetryConfig] = None
     abstract: bool = False
     extends: Optional[str] = None
+    # Files/directories this member is allowed to write, as globs relative to
+    # the project root (e.g. "src/ui/**").  Parallel scheduling uses it to make
+    # sure two members never write the same file; empty means "whole project"
+    # and therefore serial-only.
+    write_scope: list[str] = Field(default_factory=list)
+    # Opt out of parallel batches even when a write scope is declared.
+    parallel: Optional[bool] = None
 
     # Session-specific fields (only used when type == "session")
     participants: list[str] = Field(default_factory=list)

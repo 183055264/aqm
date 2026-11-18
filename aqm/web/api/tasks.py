@@ -315,11 +315,17 @@ def run_pipeline_bg(
 
         def on_stage_start(t, agent_id, stage_number):
             ag = agents.get(agent_id)
+            last = t.metadata.get("_last_schedule_decision") or {}
+            parallel = (
+                last.get("mode") == "parallel"
+                and agent_id in (last.get("selected") or [])
+            )
             broadcast_event(t.id, "stage_start", {
                 "agent_id": agent_id,
                 "stage_number": stage_number,
                 "agent_name": ag.name if ag else agent_id,
                 "runtime": ag.runtime if ag else "",
+                "parallel": parallel,
             })
 
         def on_stage_complete(t, stage):
@@ -346,11 +352,17 @@ def run_pipeline_bg(
                     "gate_result": stage.gate_result,
                 })
 
-        def on_output(line):
-            broadcast_event(task.id, "stage_output", {"text": line})
+        def on_output(line, agent_id=None):
+            payload = {"text": line}
+            if agent_id:
+                payload["agent_id"] = agent_id
+            broadcast_event(task.id, "stage_output", payload)
 
-        def on_thinking(line):
-            broadcast_event(task.id, "stage_thinking", {"text": line})
+        def on_thinking(line, agent_id=None):
+            payload = {"text": line}
+            if agent_id:
+                payload["agent_id"] = agent_id
+            broadcast_event(task.id, "stage_thinking", payload)
 
         def on_tool(event_type, data):
             broadcast_event(task.id, f"tool_{event_type}", data)
@@ -546,6 +558,17 @@ def start_pipeline_run(
     if start_agent not in agents:
         raise ValueError(f"Entry agent '{start_agent}' not found")
 
+    parallel_settings: dict = {}
+    try:
+        from aqm.core.config import load_project_config
+        from aqm.core.project import resolve_parallel_settings
+
+        parallel_settings = resolve_parallel_settings(
+            project_root, pipeline_name, load_project_config(project_root)
+        )
+    except Exception:  # noqa: BLE001 - scheduling options must not block a run
+        logger.warning("Could not resolve parallel settings", exc_info=True)
+
     task = Task(
         description=description,
         current_agent_id=start_agent,
@@ -553,6 +576,8 @@ def start_pipeline_run(
             "pipeline": pipeline_name,
             "_pipeline_params": params or {},
             "project_dir": str(project_root.resolve()),
+            # Frozen at creation so a restart uses the same scheduling policy.
+            "_parallel_settings": parallel_settings,
             **(metadata or {}),
         },
     )
@@ -1609,11 +1634,17 @@ def _resume_pipeline_bg(
 
         def on_stage_start(t, agent_id, stage_number):
             ag = agents.get(agent_id)
+            last = t.metadata.get("_last_schedule_decision") or {}
+            parallel = (
+                last.get("mode") == "parallel"
+                and agent_id in (last.get("selected") or [])
+            )
             broadcast_event(t.id, "stage_start", {
                 "agent_id": agent_id,
                 "stage_number": stage_number,
                 "agent_name": ag.name if ag else agent_id,
                 "runtime": ag.runtime if ag else "",
+                "parallel": parallel,
             })
 
         def on_output(line):
@@ -1712,11 +1743,17 @@ def _resume_human_input_bg(project_root: Path, task_id: str, response: str):
 
         def on_stage_start(t, agent_id, stage_number):
             ag = agents.get(agent_id)
+            last = t.metadata.get("_last_schedule_decision") or {}
+            parallel = (
+                last.get("mode") == "parallel"
+                and agent_id in (last.get("selected") or [])
+            )
             broadcast_event(t.id, "stage_start", {
                 "agent_id": agent_id,
                 "stage_number": stage_number,
                 "agent_name": ag.name if ag else agent_id,
                 "runtime": ag.runtime if ag else "",
+                "parallel": parallel,
             })
 
         def on_output(line):
@@ -1996,11 +2033,17 @@ def _restart_task_bg(
 
         def on_stage_start(t, agent_id, stage_number):
             ag = agents.get(agent_id)
+            last = t.metadata.get("_last_schedule_decision") or {}
+            parallel = (
+                last.get("mode") == "parallel"
+                and agent_id in (last.get("selected") or [])
+            )
             broadcast_event(t.id, "stage_start", {
                 "agent_id": agent_id,
                 "stage_number": stage_number,
                 "agent_name": ag.name if ag else agent_id,
                 "runtime": ag.runtime if ag else "",
+                "parallel": parallel,
             })
 
         def on_output(line):

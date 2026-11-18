@@ -878,6 +878,50 @@ def get_agents_yaml_path(root: Path, pipeline: str | None = None) -> Path:
         return root / AQM_DIR / AGENTS_YAML
 
 
+def load_pipeline_options(root: Path, pipeline: str | None = None) -> dict:
+    """Read top-level orchestration options from a pipeline YAML.
+
+    Only keys that are *not* agent definitions are returned (currently
+    ``parallel``).  Unknown keys are ignored so older pipelines keep working.
+    """
+    import yaml as _yaml
+
+    path = get_agents_yaml_path(root, pipeline)
+    if not path.exists():
+        return {}
+    try:
+        data = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - options must never block a run
+        logger.warning("Could not read pipeline options from %s", path, exc_info=True)
+        return {}
+    options: dict = {}
+    if isinstance(data.get("parallel"), dict):
+        options["parallel"] = data["parallel"]
+    return options
+
+
+def resolve_parallel_settings(
+    root: Path, pipeline: str | None, config=None
+) -> dict:
+    """Resolve effective parallel settings for *pipeline*.
+
+    Pipeline YAML ``parallel:`` overrides the project-level
+    ``pipeline.parallel`` block.  Missing values fall back to the scheduler
+    defaults (disabled).
+    """
+    from aqm.core.scheduler import resolve_parallel_settings as _resolve
+
+    raw: dict = {}
+    if config is not None:
+        pipeline_cfg = getattr(config, "pipeline", None) or {}
+        if isinstance(pipeline_cfg.get("parallel"), dict):
+            raw.update(pipeline_cfg["parallel"])
+    options = load_pipeline_options(root, pipeline)
+    if isinstance(options.get("parallel"), dict):
+        raw.update(options["parallel"])
+    return _resolve(raw)
+
+
 def edit_pipeline_yaml(
     current_yaml: str,
     edit_instruction: str,

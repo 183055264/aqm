@@ -298,6 +298,92 @@ def check_chunks(data: dict[str, Any]) -> list[ValidationWarning]:
                     message="Empty or invalid work-block entry",
                     fix="Use a non-empty description string.",
                 ))
+        forward = chunks.get("forward_on_done")
+        review_owner = chunks.get("review_owner")
+        known_ids = {
+            a.get("id") for a in agents if isinstance(a, dict) and a.get("id")
+        }
+        if forward and not review_owner:
+            warnings.append(ValidationWarning(
+                level="warning",
+                path=f"{prefix}.chunks.forward_on_done",
+                message="forward_on_done=true but no review_owner",
+                fix="Set chunks.review_owner to the member that reviews each block.",
+            ))
+        if review_owner and known_ids and review_owner not in known_ids:
+            warnings.append(ValidationWarning(
+                level="warning",
+                path=f"{prefix}.chunks.review_owner",
+                message=f"review_owner '{review_owner}' is not a known agent",
+                fix="Use an agent id declared in this pipeline.",
+            ))
+        scope = agent.get("write_scope")
+        if scope is not None and (
+            not isinstance(scope, list)
+            or any(not isinstance(item, str) or not item.strip() for item in scope)
+        ):
+            warnings.append(ValidationWarning(
+                level="warning",
+                path=f"{prefix}.write_scope",
+                message="write_scope must be a list of non-empty glob paths",
+                fix='Use e.g. write_scope: ["src/ui/**"].',
+            ))
+    return warnings
+
+
+def check_parallel(data: dict[str, Any]) -> list[ValidationWarning]:
+    """Validate the optional top-level ``parallel`` scheduling block."""
+    warnings: list[ValidationWarning] = []
+    parallel = data.get("parallel")
+    if parallel is None:
+        return warnings
+    if not isinstance(parallel, dict):
+        return [ValidationWarning(
+            level="error",
+            path="parallel",
+            message="parallel must be a mapping",
+            fix="Use parallel: {enabled: true, max_workers: 2}.",
+        )]
+    if not parallel.get("enabled"):
+        return warnings
+
+    workers = parallel.get("max_workers", 2)
+    if not isinstance(workers, int) or workers < 1 or workers > 8:
+        warnings.append(ValidationWarning(
+            level="warning",
+            path="parallel.max_workers",
+            message="max_workers should be between 1 and 8",
+            fix="Start with 2 and raise it only after the scopes are verified.",
+        ))
+    mode = parallel.get("on_conflict")
+    if mode not in (None, "block", "warn", "serialize"):
+        warnings.append(ValidationWarning(
+            level="warning",
+            path="parallel.on_conflict",
+            message=f"Unknown on_conflict value '{mode}'",
+            fix="Use block / warn / serialize.",
+        ))
+    hot = parallel.get("hot_files")
+    if hot is not None and not isinstance(hot, list):
+        warnings.append(ValidationWarning(
+            level="warning",
+            path="parallel.hot_files",
+            message="hot_files must be a list of glob patterns",
+            fix='Use e.g. hot_files: ["package.json", "*.lock"].',
+        ))
+
+    agents = [a for a in data.get("agents", []) if isinstance(a, dict)]
+    scoped = [a for a in agents if a.get("write_scope")]
+    if len(scoped) < 2:
+        warnings.append(ValidationWarning(
+            level="warning",
+            path="parallel.enabled",
+            message=(
+                "parallel is enabled but fewer than two members declare "
+                "write_scope, so every batch will fall back to serial"
+            ),
+            fix="Add write_scope (non-overlapping globs) to the module members.",
+        ))
     return warnings
 
 
@@ -323,4 +409,5 @@ def run_all_checks(data: dict[str, Any]) -> list[ValidationWarning]:
     warnings.extend(check_resource_availability(data))
     warnings.extend(check_permissions(data))
     warnings.extend(check_chunks(data))
+    warnings.extend(check_parallel(data))
     return warnings

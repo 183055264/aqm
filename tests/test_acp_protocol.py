@@ -113,3 +113,46 @@ def test_empty_turn_is_not_treated_as_an_answer():
 
     with pytest.raises(RuntimeError, match="no final answer"):
         session.run("hi", 10, threading.Event())
+
+
+class _RetryRpc:
+    """Empty first turn, real text on the retry."""
+
+    def __init__(self, session):
+        self.session = session
+        self.calls = 0
+
+    def request(self, method, params, **kwargs):
+        self.calls += 1
+        if self.calls == 2:
+            self.session._on_message({
+                "method": "session/update",
+                "params": {
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": "补充后的发言"},
+                    }
+                },
+            })
+        return {"stopReason": "end_turn"}
+
+
+def test_empty_turn_is_retried_once():
+    session = _bare_session()
+    rpc = _RetryRpc(session)
+    session._rpc = rpc
+
+    assert session.run("hi", 10, threading.Event()) == "补充后的发言"
+    assert rpc.calls == 2
+
+
+def test_empty_turn_is_not_retried_after_stop():
+    session = _bare_session()
+    rpc = _RetryRpc(session)
+    session._rpc = rpc
+    stop = threading.Event()
+    stop.set()
+
+    with pytest.raises(RuntimeError, match="no final answer"):
+        session.run("hi", 10, stop)
+    assert rpc.calls == 1

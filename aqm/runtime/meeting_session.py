@@ -334,6 +334,15 @@ class _JsonRpcProcess:
         self._closed.set()
 
 
+class _EmptyTurn(RuntimeError):
+    """ACP ended the turn without emitting any answer text.
+
+    Some agents (kilo with small models, for instance) reach
+    ``stopReason=end_turn`` after only tool calls, so the caller retries the
+    turn once instead of failing the member outright.
+    """
+
+
 class _ACPMeetingSession(MeetingAgentSession):
     def __init__(
         self,
@@ -657,6 +666,49 @@ class _ACPMeetingSession(MeetingAgentSession):
         on_process: Callable[[str], None] | None = None,
         interrupt_event: threading.Event | None = None,
     ) -> str:
+        """Run one turn, retrying once when the runtime ends without text."""
+        if self.system_prompt:
+            prompt = f"【你的角色与要求】\n{self.system_prompt}\n\n{prompt}"
+        attempts = 2
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._run_turn(
+                    prompt=prompt,
+                    timeout=timeout,
+                    stop_event=stop_event,
+                    on_output=on_output,
+                    on_thinking=on_thinking,
+                    on_action=on_action,
+                    on_process=on_process,
+                    interrupt_event=interrupt_event,
+                )
+            except _EmptyTurn as exc:
+                interrupted = stop_event.is_set() or bool(
+                    interrupt_event is not None and interrupt_event.is_set()
+                )
+                if attempt >= attempts or interrupted:
+                    raise RuntimeError(str(exc)) from None
+                logger.warning(
+                    "ACP turn for session %s ended without text; retrying once",
+                    self.session_id,
+                )
+                prompt = (
+                    f"{prompt}\n\n【补充】上一轮你没有输出任何正文。"
+                    "请直接用文字给出本轮发言，不要只调用工具。"
+                )
+        raise RuntimeError("ACP runtime produced no final answer")
+
+    def _run_turn(
+        self,
+        prompt: str,
+        timeout: int,
+        stop_event: threading.Event,
+        on_output: Callable[[str], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
+        on_action: Callable[[str], None] | None = None,
+        on_process: Callable[[str], None] | None = None,
+        interrupt_event: threading.Event | None = None,
+    ) -> str:
         with self._turn_lock:
             self._output_parts.clear()
             self._thinking_parts.clear()
@@ -672,8 +724,6 @@ class _ACPMeetingSession(MeetingAgentSession):
             self._process_callback = on_process
             self._thinking_callback = on_thinking
             self._action_callback = on_action
-        if self.system_prompt:
-            prompt = f"【你的角色与要求】\n{self.system_prompt}\n\n{prompt}"
         response: dict[str, Any] = {}
         try:
             response = self._rpc.request(
@@ -730,7 +780,7 @@ class _ACPMeetingSession(MeetingAgentSession):
             )
         result = final_segment or full_output
         if not result:
-            raise RuntimeError(
+            raise _EmptyTurn(
                 "ACP runtime produced no final answer "
                 f"(stopReason={stop_reason or 'unknown'})"
             )

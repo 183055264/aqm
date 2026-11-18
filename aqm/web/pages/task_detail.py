@@ -802,21 +802,26 @@ function renderSchedule() {{
     : '串行执行 · 并行未开启';
   badge.className = 'schedule-badge' + (on ? ' is-on' : '');
 
-  const cards = (scheduleState.log || []).slice().reverse()
-    .map(scheduleRoundHtml).filter(Boolean);
+  const entries = (scheduleState.log || []).slice().reverse();
+  const rounds = entries.filter(entry => (entry.selected || []).length);
+  const notesOnly = entries.filter(entry => !(entry.selected || []).length);
   let html = '';
-  if (!cards.length) {{
+  if (!entries.length) {{
     html += '<div class="schedule-empty">' +
       (on
         ? '并行已开启，但还没有调度记录。架构阶段给出工作块与写范围后，这里会说明每一轮为什么并行或排队。'
         : '并行未开启，所有工作块按阶段串行执行。开启后这里会显示每一轮的调度理由。') +
       '</div>';
+  }} else if (!rounds.length) {{
+    html += scheduleRoundHtml(notesOnly[0]);
   }} else {{
-    html += cards[0];
-    if (cards.length > 1) {{
+    html += scheduleRoundHtml(rounds[0]);
+    // Closing notes (why parallel stopped) read best under the last real batch.
+    html += notesOnly.slice(0, 2).map(scheduleRoundHtml).join('');
+    if (rounds.length > 1) {{
       html += '<details class="schedule-history"><summary>更早的 ' +
-        (cards.length - 1) + ' 条</summary>' +
-        cards.slice(1).join('') + '</details>';
+        (rounds.length - 1) + ' 轮</summary>' +
+        rounds.slice(1).map(scheduleRoundHtml).join('') + '</details>';
     }}
   }}
   if (scheduleState.stalled) {{

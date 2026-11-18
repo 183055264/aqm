@@ -36,7 +36,7 @@ apiVersion: aqm/v0.1
 
 ## Top-Level Structure
 
-An agents.yaml file has five top-level fields:
+An agents.yaml file has six top-level fields:
 
 ```yaml
 apiVersion: aqm/v0.1       # Required
@@ -45,6 +45,8 @@ params:                      # Optional — parameter declarations
   model: claude-sonnet-4-20250514
 imports:                     # Optional — import agents from other files
   - from: ./shared/qa.yaml
+parallel:                    # Optional — module parallelism (off by default)
+  enabled: false
 agents:                      # Required — at least one agent
   - id: my_agent
     system_prompt: "You are helpful."
@@ -57,6 +59,33 @@ agents:                      # Required — at least one agent
 | `params` | object | No | `{}` | Parameter declarations. Keys are param names, values are `ParamDefinition` or shorthand. |
 | `imports` | array of ImportSpec | No | `[]` | External YAML files to import agents from. |
 | `agents` | array of AgentDefinition | Yes | — | Agent definitions. Must contain at least one entry. |
+| `parallel` | ParallelConfig | No | disabled | Optional module-parallel scheduling. Off unless `parallel.enabled` is literally `true`. |
+
+### parallel
+
+Opt-in module parallelism. The scheduler — not the model — decides which
+members run together. A member joins a batch only when it declares
+`write_scope`; overlapping scopes or hot files force serial order.
+
+```yaml
+parallel:
+  enabled: true          # default false
+  max_workers: 2         # 2..8
+  on_conflict: block     # block | warn | serialize
+  audit: true            # compare file snapshots before/after a round
+  checkpoint: true       # copy writable files to .aqm/checkpoints/<task>/
+  hot_files: ["package.json", "*.lock"]
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | boolean | No | `false` | Master switch; false keeps the original serial pipeline. |
+| `max_workers` | integer | No | `2` | Maximum members in one batch. |
+| `max_rounds` | integer | No | `40` | Safety cap on batch rounds. |
+| `on_conflict` | `"block"` \| `"warn"` \| `"serialize"` | No | `"block"` | Reaction when the audit finds two writers on one file or a file outside every scope. |
+| `audit` | boolean | No | `true` | Snapshot project files before/after each round. |
+| `checkpoint` | boolean | No | `true` | Copy files inside the selected scopes before a round. |
+| `hot_files` | array of glob | No | repo manifests | Files whose writer must always run alone. |
 
 ---
 
@@ -194,6 +223,24 @@ The `agents` section is a list of `AgentDefinition` objects. At least one agent 
 | `context_strategy` | `"own"` \| `"shared"` \| `"both"` | No | `"both"` | What context to inject into `{{ context }}`. Token optimization. |
 | `context_window` | integer | No | `3` | Number of recent stages to include in full (0 = all). |
 | `human_input` | HumanInputConfig \| boolean \| string \| null | No | `null` | Human-in-the-loop input configuration. |
+| `chunks` | ChunksConfig \| null | No | `null` | Work-block decomposition and review settings (see `chunks`). |
+| `write_scope` | array of string | No | `[]` | Glob paths this member may write. Required for parallel scheduling; empty means serial-only. |
+| `parallel` | boolean \| null | No | `null` | `false` opts this member out of parallel batches. |
+
+#### chunks
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | boolean | No | `true` | Track work blocks for this member's stages. |
+| `initial` | array | No | `[]` | Predefined blocks (strings or `{description, owner, phase}`). |
+| `auto_split` | boolean \| null | No | `true` | Allow the architecture stage to split the request into blocks. |
+| `enforce` | `"off"` \| `"warn"` \| `"retry"` \| `"fail"` | No | `"retry"` | What happens when a stage ends with unfinished blocks. |
+| `retry_limit` | integer | No | `2` | Retry budget when `enforce: retry`. |
+| `owner_filter` | boolean \| null | No | `true` | Only this member's blocks count for its stage. |
+| `auto_claim` | boolean \| null | No | `true` | Claim the next pending block when a turn starts. |
+| `forward_on_done` | boolean | No | `false` | Hand every finished block to `review_owner` immediately. |
+| `review_owner` | string | No | `""` | Member that reviews each block; rejects with `CHUNK_REJECT: C-001 <issue>`. |
+| `max_chunks_per_stage` | integer | No | `0` | Blocks one turn may finish; `0` = unlimited. |
 
 ```yaml
 agents:

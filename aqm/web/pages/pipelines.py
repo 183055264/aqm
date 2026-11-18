@@ -155,6 +155,35 @@ def render_pipelines(
 
   <!-- Visual Editor Panel -->
   <div id="panelVisual" style="margin-top:16px;">
+    <div class="schedule-settings">
+      <div class="schedule-settings-head">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="parEnabled" onchange="onParallelToggle()">
+          <span style="font-weight:600;font-size:13px;">启用模块并行</span>
+        </label>
+        <span class="schedule-settings-hint">默认关闭；开启后仍需成员声明写范围才会真正并行</span>
+      </div>
+      <div id="parFields" style="display:none;margin-top:10px;">
+        <div class="form-row" style="align-items:flex-end;">
+          <div class="form-group" style="flex:0 1 150px;">
+            <label>最大并行人数</label>
+            <input id="parMaxWorkers" type="number" min="2" max="8" value="2">
+          </div>
+          <div class="form-group" style="flex:0 1 220px;">
+            <label>发现写冲突时</label>
+            <select id="parConflict">
+              <option value="block">直接失败并说明</option>
+              <option value="warn">只告警</option>
+              <option value="serialize">冲突成员改为排队</option>
+            </select>
+          </div>
+          <button class="btn btn-sm" onclick="saveParallelSettings()">保存并行设置</button>
+        </div>
+        <div class="schedule-settings-hint" style="margin-top:6px;">
+          写范围重叠、命中热文件（package.json、锁文件等）或未声明 write_scope 的成员会自动串行。
+        </div>
+      </div>
+    </div>
     <div class="form-row" style="margin-bottom:12px;">
       <div class="form-group" style="flex:0 1 300px;min-width:220px;">
         <label>从团队模板导入</label>
@@ -295,7 +324,33 @@ def render_pipelines(
             <label><input type="checkbox" id="af_chunkOwnerFilter"> 只考核本成员名下的工作块</label>
             <label><input type="checkbox" id="af_chunkAutoClaim"> 开工时自动认领第一个待处理块</label>
           </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+            <div class="form-group">
+              <label>本轮最多完成几个块（0 = 不限）</label>
+              <input id="af_chunkMaxPerStage" type="number" min="0" max="20" value="0">
+            </div>
+            <div class="form-group">
+              <label>复核人 ID（逐块复核留空则不启用）</label>
+              <input id="af_chunkReviewer" type="text" placeholder="例如 reviewer">
+            </div>
+          </div>
+          <label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;margin-top:6px;">
+            <input type="checkbox" id="af_chunkForward"> 每完成一块立即交给复核人（块级交接）
+          </label>
         </div>
+      </div>
+
+      <!-- Parallel safety -->
+      <div style="margin-top:14px;">
+        <label style="font-weight:600;font-size:13px;color:var(--text-dim);">并行与写范围</label>
+        <div class="form-group" style="margin-top:8px;">
+          <label>写范围 write_scope（每行一个 glob，相对项目根目录）</label>
+          <textarea id="af_writeScope" rows="3" placeholder="src/ui/**&#10;tests/ui/**"></textarea>
+          <div class="hint">不声明写范围的成员只会被串行调度；写范围重叠的成员不会同时运行。</div>
+        </div>
+        <label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="af_allowParallel" checked> 允许参与并行调度
+        </label>
       </div>
 
       <!-- Handoffs -->
@@ -488,6 +543,13 @@ function renderAgentCards(agents) {{
     const chunksHtml = a.chunks
       ? '<span class="badge" style="background:#1f3d2b;color:#68d391;font-size:10px;margin-left:6px;">工作块 ' + (a.chunks.enforce || 'retry') + '</span>'
       : '';
+    const scopeList = a.write_scope || [];
+    const scopeHtml = scopeList.length
+      ? '<span class="badge" title="' + scopeList.join(' , ') + '" style="background:var(--surface);color:var(--text-dim);border:1px solid var(--border);font-size:10px;margin-left:6px;">写范围 ' + scopeList.length + '</span>'
+      : '<span class="badge" title="未声明 write_scope 的成员只会串行执行" style="background:var(--surface);color:var(--text-dim);border:1px dashed var(--border);font-size:10px;margin-left:6px;">串行</span>';
+    const reviewHtml = (a.chunks && a.chunks.forward_on_done)
+      ? '<span class="badge" style="background:#2d2438;color:#c9a6ff;font-size:10px;margin-left:6px;">逐块复核 ' + (a.chunks.review_owner || '未指定') + '</span>'
+      : '';
     const participantsHtml = (a.type === 'session' && (a.participants || []).length)
       ? '<div style="font-size:11px;color:var(--text-dim);margin-top:4px;">参与者: ' + a.participants.join('、') + '</div>'
       : '';
@@ -502,6 +564,8 @@ function renderAgentCards(agents) {{
             ${{modelHtml}}
             ${{typeHtml}}
             ${{chunksHtml}}
+            ${{scopeHtml}}
+            ${{reviewHtml}}
             ${{gateHtml}}
           </div>
           ${{participantsHtml}}
@@ -523,6 +587,41 @@ async function loadYamlContent() {{
   try {{
     const data = await apiFetch('/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE));
     document.getElementById('yamlEditor').value = data.content;
+  }} catch(e) {{}}
+}}
+
+/* ── Parallel scheduling settings ───────────── */
+function onParallelToggle() {{
+  const on = document.getElementById('parEnabled').checked;
+  document.getElementById('parFields').style.display = on ? 'block' : 'none';
+}}
+
+async function loadParallelSettings() {{
+  if (!EDIT_PIPELINE) return;
+  try {{
+    const data = await apiFetch('/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/parallel');
+    document.getElementById('parEnabled').checked = !!data.enabled;
+    document.getElementById('parMaxWorkers').value = data.max_workers || 2;
+    document.getElementById('parConflict').value = data.on_conflict || 'block';
+    onParallelToggle();
+  }} catch(e) {{}}
+}}
+
+async function saveParallelSettings() {{
+  if (!EDIT_PIPELINE) return;
+  const body = {{
+    enabled: document.getElementById('parEnabled').checked,
+    max_workers: parseInt(document.getElementById('parMaxWorkers').value || '2', 10) || 2,
+    on_conflict: document.getElementById('parConflict').value,
+    audit: true,
+    hot_files: [],
+  }};
+  try {{
+    await apiFetch('/api/pipelines/' + encodeURIComponent(EDIT_PIPELINE) + '/parallel', {{
+      method: 'PUT', body: JSON.stringify(body)
+    }});
+    showToast(body.enabled ? '已开启并行（新任务生效）' : '已关闭并行');
+    loadYamlContent();
   }} catch(e) {{}}
 }}
 
@@ -661,6 +760,11 @@ async function showAgentForm(agentId) {{
   document.getElementById('af_chunkAutoSplit').checked = true;
   document.getElementById('af_chunkOwnerFilter').checked = true;
   document.getElementById('af_chunkAutoClaim').checked = true;
+  document.getElementById('af_chunkMaxPerStage').value = 0;
+  document.getElementById('af_chunkReviewer').value = '';
+  document.getElementById('af_chunkForward').checked = false;
+  document.getElementById('af_writeScope').value = '';
+  document.getElementById('af_allowParallel').checked = true;
   onChunksToggle();
   document.getElementById('af_gateEnabled').checked = false;
   document.getElementById('gateFields').style.display = 'none';
@@ -713,8 +817,16 @@ async function showAgentForm(agentId) {{
           document.getElementById('af_chunkAutoSplit').checked = a.chunks.auto_split !== false;
           document.getElementById('af_chunkOwnerFilter').checked = a.chunks.owner_filter !== false;
           document.getElementById('af_chunkAutoClaim').checked = a.chunks.auto_claim !== false;
+          document.getElementById('af_chunkMaxPerStage').value =
+            a.chunks.max_chunks_per_stage || 0;
+          document.getElementById('af_chunkReviewer').value = a.chunks.review_owner || '';
+          document.getElementById('af_chunkForward').checked = !!a.chunks.forward_on_done;
           onChunksToggle();
         }}
+        const scope = a.write_scope || [];
+        document.getElementById('af_writeScope').value =
+          (Array.isArray(scope) ? scope : [scope]).filter(Boolean).join('\\n');
+        document.getElementById('af_allowParallel').checked = a.parallel !== false;
         if (a.gate) {{
           document.getElementById('af_gateEnabled').checked = true;
           document.getElementById('gateFields').style.display = 'block';
@@ -949,10 +1061,21 @@ async function saveAgent() {{
       auto_split: document.getElementById('af_chunkAutoSplit').checked,
       owner_filter: document.getElementById('af_chunkOwnerFilter').checked,
       auto_claim: document.getElementById('af_chunkAutoClaim').checked,
+      max_chunks_per_stage: parseInt(
+        document.getElementById('af_chunkMaxPerStage').value || '0', 10
+      ) || 0,
+      forward_on_done: document.getElementById('af_chunkForward').checked,
+      review_owner: document.getElementById('af_chunkReviewer').value.trim(),
     }};
   }} else {{
     body.chunks = null;
   }}
+
+  // Parallel safety: the scope is always saved so scheduling stays explainable.
+  body.write_scope = document.getElementById('af_writeScope').value
+    .split('\\n').map(s => s.trim()).filter(Boolean);
+  body.parallel = document.getElementById('af_allowParallel').checked;
+  if (body.parallel) body.parallel = null;  // null = follow the pipeline default
 
   // Collect handoffs. Fields not exposed by the visual editor (task / payload)
   // are copied from the original definition so saving never drops them.
@@ -1167,6 +1290,7 @@ document.addEventListener('DOMContentLoaded', function () {{
   if (!EDIT_PIPELINE) return;
   loadAgentCards();
   loadTeamTemplateOptions();
+  loadParallelSettings();
   if (FROM_MEETING) importMeetingMembers();
 }});
 </script>"""

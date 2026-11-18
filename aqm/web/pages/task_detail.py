@@ -702,8 +702,26 @@ def render_task_detail(
         ],
         ensure_ascii=False,
     )
+    parallel_settings = task.metadata.get("_parallel_settings") or {}
+    schedule_state = {
+        "enabled": bool(parallel_settings.get("enabled")),
+        "max_workers": int(parallel_settings.get("max_workers") or 2),
+        "on_conflict": parallel_settings.get("on_conflict") or "block",
+        "audit": bool(parallel_settings.get("audit", True)),
+        "log": (task.metadata.get("_schedule_log") or [])[-10:],
+        "conflicts": (task.metadata.get("_conflict_log") or [])[-3:],
+        "stalled": bool(task.metadata.get("_parallel_stalled")),
+    }
+    schedule_json = json.dumps(schedule_state, ensure_ascii=False)
     chunks_section = f"""\
 <div id="chunksPanel">
+  <div class="schedule-panel" id="schedulePanel">
+    <div class="schedule-head">
+      <span class="schedule-title">调度说明</span>
+      <span class="schedule-badge" id="scheduleBadge"></span>
+    </div>
+    <div class="schedule-body" id="scheduleBody"></div>
+  </div>
   <div class="chunk-head">
     <div>
       <div class="chunk-title">工作块</div>
@@ -736,6 +754,95 @@ const TASK_ACTIVE = ['in_progress','awaiting_gate','awaiting_human_input'].inclu
 // only switches tabs and would stay empty until a manual refresh.
 const LIVE_RENDERED = {"true" if show_live else "false"};
 let chunkCache = [];
+const SCHEDULE_INIT = {schedule_json};
+let scheduleState = SCHEDULE_INIT;
+
+function scheduleAgentLabel(id) {{
+  const hit = (CHUNK_OWNERS || []).find(item => item.id === id);
+  return hit ? (hit.label || id) : (id || '未分配');
+}}
+
+function scheduleRoundHtml(entry) {{
+  const mode = entry.mode === 'parallel' ? 'parallel' : 'serial';
+  const modeText = mode === 'parallel'
+    ? ('并行 ' + (entry.selected || []).length + ' 人')
+    : '串行 1 人';
+  const names = (entry.selected || []).map(scheduleAgentLabel).join('、') || '无';
+  const waits = (entry.waiting || []).map(item =>
+    '<div class="schedule-wait"><span class="schedule-who">' +
+    chunkEscape(scheduleAgentLabel(item.agent_id)) + '</span>' +
+    chunkEscape(item.reason || '') + '</div>'
+  ).join('');
+  const notes = (entry.notes || []).map(note =>
+    '<div class="schedule-note">' + chunkEscape(note) + '</div>'
+  ).join('');
+  return '<div class="schedule-round">' +
+    '<div class="schedule-round-head">' +
+      '<span class="schedule-round-no">第 ' + (entry.round || 1) + ' 轮</span>' +
+      '<span class="schedule-mode is-' + mode + '">' + modeText + '</span>' +
+      '<span class="schedule-agents">' + chunkEscape(names) + '</span>' +
+    '</div>' + waits + notes + '</div>';
+}}
+
+function renderSchedule() {{
+  const body = document.getElementById('scheduleBody');
+  const badge = document.getElementById('scheduleBadge');
+  if (!body || !badge) return;
+  const on = !!scheduleState.enabled;
+  badge.textContent = on
+    ? ('并行已开启 · 最多 ' + (scheduleState.max_workers || 2) + ' 人')
+    : '串行执行 · 并行未开启';
+  badge.className = 'schedule-badge' + (on ? ' is-on' : '');
+
+  const log = (scheduleState.log || []).slice().reverse();
+  let html = '';
+  if (!log.length) {{
+    html += '<div class="schedule-empty">' +
+      (on
+        ? '并行已开启，但还没有调度记录。架构阶段给出工作块与写范围后，这里会说明每一轮为什么并行或排队。'
+        : '并行未开启，所有工作块按阶段串行执行。开启后这里会显示每一轮的调度理由。') +
+      '</div>';
+  }} else {{
+    const latest = log[0];
+    html += scheduleRoundHtml(latest);
+    if (log.length > 1) {{
+      html += '<details class="schedule-history"><summary>更早的 ' +
+        (log.length - 1) + ' 轮</summary>' +
+        log.slice(1).map(scheduleRoundHtml).join('') + '</details>';
+    }}
+  }}
+  if (scheduleState.stalled) {{
+    html += '<div class="schedule-alert">并行已连续两轮没有新增完成的工作块，已交回串行流程。</div>';
+  }}
+  for (const conflict of (scheduleState.conflicts || [])) {{
+    const paths = (conflict.conflicts || []).map(item => item.path).join('、');
+    const loose = (conflict.unclaimed || []).join('、');
+    html += '<div class="schedule-alert">' +
+      '检测到写冲突：' + chunkEscape(paths || '—') +
+      (loose ? '；写范围外的文件：' + chunkEscape(loose) : '') +
+      '</div>';
+  }}
+  body.innerHTML = html;
+}}
+
+function pushScheduleRound(entry) {{
+  if (!entry) return;
+  scheduleState.log = (scheduleState.log || []).concat([entry]).slice(-10);
+  renderSchedule();
+}}
+
+function pushScheduleNote(note) {{
+  if (!note) return;
+  const last = (scheduleState.log || [])[scheduleState.log.length - 1];
+  if (last) {{
+    last.notes = (last.notes || []).concat([note]);
+  }} else {{
+    scheduleState.log = [{{
+      round: 0, mode: 'serial', selected: [], waiting: [], notes: [note]
+    }}];
+  }}
+  renderSchedule();
+}}
 
 function openLiveOutput(taskUrl) {{
   if (LIVE_RENDERED) {{
@@ -1028,6 +1135,7 @@ function setChunkSplitState(text, isError) {{
 }}
 
 document.addEventListener('DOMContentLoaded', loadChunks);
+document.addEventListener('DOMContentLoaded', renderSchedule);
 
 // A page rendered while the task was still queued has no live panel (and no
 // SSE stream), so it would keep showing "任务尚未开始" even after the pipeline
@@ -1861,6 +1969,15 @@ function toggleThinking() {{
   const rosterEl = document.getElementById('liveRoster');
   const INTERJECT_HISTORY = {interject_history_js};
   let currentBlock = null;
+  // One live block per member while a parallel batch runs; serial mode only
+  // ever uses currentBlock.
+  const PARALLEL_BLOCKS = new Map();
+  function blockFor(agentId) {{
+    if (agentId && PARALLEL_BLOCKS.get(agentId)) {{
+      return PARALLEL_BLOCKS.get(agentId);
+    }}
+    return currentBlock;
+  }}
   const activeBlocks = new Set();
   const AGENT_COLORS = ['#e06c75', '#61afef', '#98c379', '#e5c07b', '#c678dd',
                         '#56b6c2', '#d19a66', '#7f9cf5', '#f78c6c', '#4ec9b0'];
@@ -2295,6 +2412,7 @@ function toggleThinking() {{
       actionCount: 0, details: details, summary: summary, pre: pre,
       body: body, thinkingLen: 0, outputLen: 0, meta: d
     }};
+    if (d.agent_id) PARALLEL_BLOCKS.set(d.agent_id, currentBlock);
     activeBlocks.add(currentBlock);
     updateElapsed(currentBlock);
     startNow(
@@ -2306,15 +2424,16 @@ function toggleThinking() {{
     scrollStream();
     return currentBlock;
   }}
-  function appendThinking(chunk) {{
-    if (!currentBlock || !chunk) return;
-    currentBlock.thinkingLen += chunk.length;
-    if (currentBlock.details.style.display === 'none') {{
-      currentBlock.details.style.display = '';
-      currentBlock.details.open = true;
+  function appendThinking(chunk, agentId) {{
+    const target = blockFor(agentId);
+    if (!target || !chunk) return;
+    target.thinkingLen += chunk.length;
+    if (target.details.style.display === 'none') {{
+      target.details.style.display = '';
+      target.details.open = true;
     }}
-    currentBlock.pre.textContent += chunk;
-    updateElapsed(currentBlock);
+    target.pre.textContent += chunk;
+    updateElapsed(target);
     setNowState(runningStateText('思考中…'));
     scrollStream();
   }}
@@ -2351,20 +2470,21 @@ function toggleThinking() {{
     setNowState(runningStateText('调用工具…'));
     scrollStream();
   }}
-  function appendOutput(chunk) {{
-    if (!currentBlock || !chunk) return;
-    if (currentBlock.stateEl && (currentBlock.stateEl.textContent === '思考中…'
-        || currentBlock.stateEl.textContent === '已暂停 · 收尾中…')) {{
-      currentBlock.stateEl.textContent = TASK_PAUSED ? '已暂停 · 收尾中…' : '生成中…';
+  function appendOutput(chunk, agentId) {{
+    const target = blockFor(agentId);
+    if (!target || !chunk) return;
+    if (target.stateEl && (target.stateEl.textContent === '思考中…'
+        || target.stateEl.textContent === '已暂停 · 收尾中…')) {{
+      target.stateEl.textContent = TASK_PAUSED ? '已暂停 · 收尾中…' : '生成中…';
     }}
     setNowState(runningStateText('生成中…'));
-    currentBlock.outputLen += chunk.length;
-    currentBlock.body.textContent += chunk;
+    target.outputLen += chunk.length;
+    target.body.textContent += chunk;
     scrollStream();
   }}
   function finalizeBlock(d, extra) {{
-    if (!currentBlock) return;
-    const state = currentBlock;
+    const state = blockFor(d && d.agent_id);
+    if (!state) return;
     if (!state.outputLen && d && d.output_preview) {{
       state.body.textContent = d.output_preview;
       state.outputLen = d.output_preview.length;
@@ -2481,15 +2601,26 @@ function toggleThinking() {{
 
   es.addEventListener('stage_start', (e) => {{
     const d = JSON.parse(e.data);
-    // A snapshot may have already rebuilt this in-flight stage after a reload;
-    // do not create a duplicate block for the same turn.
-    const sameTurn = currentBlock && currentBlock.meta &&
-      currentBlock.meta.stage_number === d.stage_number &&
-      currentBlock.meta.agent_id === d.agent_id &&
-      !currentBlock.finishedAt;
-    if (!sameTurn) {{
-      markPreviousDone();
-      createBlock(d);
+    if (d.parallel) {{
+      // Members of one parallel batch stream at the same time: keep a block
+      // per member instead of closing the previous one.
+      const existing = PARALLEL_BLOCKS.get(d.agent_id);
+      if (existing && !existing.finishedAt) {{
+        currentBlock = existing;
+      }} else {{
+        createBlock(d);
+      }}
+    }} else {{
+      // A snapshot may have already rebuilt this in-flight stage after a
+      // reload; do not create a duplicate block for the same turn.
+      const sameTurn = currentBlock && currentBlock.meta &&
+        currentBlock.meta.stage_number === d.stage_number &&
+        currentBlock.meta.agent_id === d.agent_id &&
+        !currentBlock.finishedAt;
+      if (!sameTurn) {{
+        markPreviousDone();
+        createBlock(d);
+      }}
     }}
     setRosterState(d.agent_id, 'running');
     titleEl.innerHTML = TASK_PAUSED
@@ -2501,7 +2632,7 @@ function toggleThinking() {{
   }});
   es.addEventListener('stage_thinking', (e) => {{
     const d = JSON.parse(e.data);
-    appendThinking(d.text);
+    appendThinking(d.text, d.agent_id);
   }});
   es.addEventListener('tool_process', (e) => {{
     const d = JSON.parse(e.data);
@@ -2513,7 +2644,7 @@ function toggleThinking() {{
   }});
   es.addEventListener('stage_output', (e) => {{
     const d = JSON.parse(e.data);
-    appendOutput(d.text);
+    appendOutput(d.text, d.agent_id);
   }});
   es.addEventListener('tool_call', (e) => {{
     const d = JSON.parse(e.data);
@@ -2523,7 +2654,8 @@ function toggleThinking() {{
   es.addEventListener('stage_complete', (e) => {{
     const d = JSON.parse(e.data);
     setRosterState(d.agent_id, TASK_PAUSED ? 'paused' : 'ready');
-    let extra = '已完成 · ' + (currentBlock ? currentBlock.outputLen : 0) + ' 字';
+    const doneBlock = blockFor(d.agent_id);
+    let extra = '已完成 · ' + (doneBlock ? doneBlock.outputLen : 0) + ' 字';
     if (d.gate_result) extra += ' · 审批: ' + d.gate_result;
     finalizeBlock(d, extra);
     settleInterjections(d.agent_id);
@@ -2596,6 +2728,23 @@ function toggleThinking() {{
   }});
   es.addEventListener('chunk_update', () => {{
     if (typeof loadChunks === 'function') loadChunks();
+  }});
+  es.addEventListener('schedule_decision', (e) => {{
+    const d = JSON.parse(e.data);
+    pushScheduleRound(d);
+  }});
+  es.addEventListener('schedule_note', (e) => {{
+    const d = JSON.parse(e.data);
+    pushScheduleNote(d.note);
+  }});
+  es.addEventListener('parallel_conflict', (e) => {{
+    const d = JSON.parse(e.data);
+    scheduleState.conflicts = (scheduleState.conflicts || []).concat([d]).slice(-3);
+    renderSchedule();
+    const paths = (d.conflicts || []).map(item => item.path).join('、');
+    if (typeof showToast === 'function') {{
+      showToast('并行写冲突：' + (paths || '检测到写范围外的文件改动'));
+    }}
   }});
   es.addEventListener('pipeline_resuming', (e) => {{
     titleEl.innerHTML = '<span class="live-dot"></span>恢复中...';

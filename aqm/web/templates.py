@@ -360,6 +360,32 @@ select.control { appearance:none; cursor:pointer; }
 .badge-blocked { background:#4a1f1f; color:#f85149; }
 .chunk-mini { margin-top:4px; font-size:11px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
 
+/* ── Scheduling explanation panel ───────────── */
+.schedule-panel { margin-bottom:14px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); }
+.schedule-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px; }
+.schedule-title { font-size:12px; font-weight:700; letter-spacing:.04em; color:var(--text-dim); text-transform:uppercase; }
+.schedule-badge { font-size:11px; padding:2px 8px; border-radius:10px; border:1px solid var(--border); background:var(--chip-bg); color:var(--text-dim); }
+.schedule-badge.is-on { color:var(--green); border-color:rgba(63,185,80,.35); background:rgba(63,185,80,.12); }
+.schedule-body { display:grid; gap:6px; }
+.schedule-empty { font-size:12px; color:var(--text-dim); line-height:1.6; }
+.schedule-round { font-size:12px; }
+.schedule-round-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.schedule-round-no { color:var(--text-dim); font-variant-numeric:tabular-nums; }
+.schedule-mode { font-size:11px; padding:1px 7px; border-radius:10px; border:1px solid var(--border); }
+.schedule-mode.is-parallel { color:var(--green); border-color:rgba(63,185,80,.35); }
+.schedule-mode.is-serial { color:var(--orange); border-color:rgba(210,153,34,.35); }
+.schedule-agents { color:var(--text); }
+.schedule-wait { margin-top:3px; padding-left:10px; font-size:12px; color:var(--text-dim); border-left:2px solid var(--border); }
+.schedule-who { color:var(--text); margin-right:6px; }
+.schedule-note { margin-top:3px; font-size:12px; color:var(--text-dim); }
+.schedule-alert { margin-top:4px; font-size:12px; color:var(--red); }
+.schedule-history { margin-top:6px; font-size:12px; color:var(--text-dim); }
+.schedule-history summary { cursor:pointer; }
+.schedule-history .schedule-round { margin-top:6px; padding-top:6px; border-top:1px dashed var(--border); }
+.schedule-settings { margin-bottom:14px; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); }
+.schedule-settings-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.schedule-settings-hint { font-size:12px; color:var(--text-dim); }
+
 
 @media (max-width:768px) {
   .sidebar { position:fixed; top:0; bottom:0; left:0; transform:translateX(-100%); transition:transform .3s ease; }

@@ -48,6 +48,16 @@ class AgentRequest(BaseModel):
     summary_agent: str | None = None
     consensus: dict | None = None
     chunks: dict | None = None
+    write_scope: list[str] = Field(default_factory=list)
+    parallel: bool | None = None
+
+
+class ParallelRequest(BaseModel):
+    enabled: bool = False
+    max_workers: int = 2
+    on_conflict: str = "block"
+    audit: bool = True
+    hot_files: list[str] = Field(default_factory=list)
 
 
 def create_pipelines_router(project_root: Path) -> APIRouter:
@@ -178,6 +188,41 @@ def create_pipelines_router(project_root: Path) -> APIRouter:
         content = _yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
         save_pipeline(project_root, name, content)
 
+    # ── Parallel scheduling settings ─────────────────────────────────
+
+    @router.get("/api/pipelines/{name}/parallel")
+    async def api_get_parallel(name: str):
+        from aqm.core.scheduler import resolve_parallel_settings
+
+        data, _ = _load_pipeline_yaml(name)
+        settings = resolve_parallel_settings(data.get("parallel") or {})
+        settings["configured"] = bool(data.get("parallel"))
+        return settings
+
+    @router.put("/api/pipelines/{name}/parallel")
+    async def api_set_parallel(name: str, req: ParallelRequest):
+        data, _ = _load_pipeline_yaml(name)
+        if req.enabled:
+            data["parallel"] = {
+                "enabled": True,
+                "max_workers": max(2, min(8, int(req.max_workers or 2))),
+                "on_conflict": (
+                    req.on_conflict
+                    if req.on_conflict in {"block", "warn", "serialize"}
+                    else "block"
+                ),
+                "audit": bool(req.audit),
+            }
+            if req.hot_files:
+                data["parallel"]["hot_files"] = [
+                    item for item in req.hot_files if str(item).strip()
+                ]
+        else:
+            # Disabled means "remove the key", so the default (off) applies.
+            data.pop("parallel", None)
+        _save_pipeline_yaml(name, data)
+        return {"status": "saved", "enabled": bool(req.enabled)}
+
     @router.get("/api/pipelines/{name}/agents")
     async def api_list_agents(name: str):
         data, _ = _load_pipeline_yaml(name)
@@ -200,6 +245,8 @@ def create_pipelines_router(project_root: Path) -> APIRouter:
                 "summary_agent": a.get("summary_agent"),
                 "consensus": a.get("consensus"),
                 "chunks": a.get("chunks"),
+                "write_scope": a.get("write_scope") or [],
+                "parallel": a.get("parallel"),
             }
             for a in agents
         ]
@@ -229,6 +276,8 @@ def create_pipelines_router(project_root: Path) -> APIRouter:
             agent_dict.pop("chunks", None)
         elif req.chunks.get("enabled") is True and len(req.chunks) == 1:
             agent_dict.pop("chunks", None)
+        if not req.write_scope:
+            agent_dict.pop("write_scope", None)
         agents.append(agent_dict)
         data["agents"] = agents
         _save_pipeline_yaml(name, data)
@@ -260,6 +309,7 @@ def create_pipelines_router(project_root: Path) -> APIRouter:
             "type", "name", "runtime", "system_prompt", "model", "handoffs",
             "gate", "mcp", "context_strategy", "human_input", "participants",
             "max_rounds", "summary_agent", "consensus", "chunks",
+            "write_scope", "parallel",
         ):
             if field not in updates:
                 continue
@@ -267,6 +317,10 @@ def create_pipelines_router(project_root: Path) -> APIRouter:
             if field in ("gate", "human_input", "consensus", "chunks") and value is None:
                 agent_dict.pop(field, None)
             elif field == "model" and not value:
+                agent_dict.pop(field, None)
+            elif field == "write_scope" and not value:
+                agent_dict.pop(field, None)
+            elif field == "parallel" and value is None:
                 agent_dict.pop(field, None)
             else:
                 agent_dict[field] = value

@@ -593,7 +593,7 @@ def _run_long_compaction_meeting(monkeypatch, tmp_path, *, config=""):
     with open(shared, "a", encoding="utf-8") as handle:
         handle.write("\n## 第 1 轮讨论\n\n")
         handle.write("### 人类参与者 (human) - 第1轮 · 插话\n\n不要做收费功能\n\n")
-        for idx in range(3):
+        for idx in range(6):
             handle.write(
                 f"### 成员{idx} (claude) - 第1轮\n\n{filler}\n\n"
             )

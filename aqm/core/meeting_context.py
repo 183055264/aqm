@@ -27,11 +27,11 @@ DEFAULT_COMPACT_SETTINGS: dict = {
     # otherwise; "extract" never calls a model; "llm" always does.
     "mode": "auto",
     # Compact only when the transcript is longer than this.
-    "trigger_chars": 24000,
+    "trigger_chars": 48000,
     # Always keep this much of the transcript verbatim at the tail.
-    "keep_recent_chars": 8000,
+    "keep_recent_chars": 12000,
     # Upper bound for the rolling summary.
-    "max_summary_chars": 4000,
+    "max_summary_chars": 8000,
     # Summarise in slices of this size so one call stays inside the window.
     "chunk_chars": 8000,
     # Hard cap on how much is folded per compaction (a few model calls at most).
@@ -200,24 +200,50 @@ def _clip(text: str, limit: int) -> str:
 _DECISION_RE = re.compile(
     r"决定|结论|裁决|约束|必须|禁止|不允许|默认|最终|验收|优先|风险|口径|冻结|确认|改用|改为"
 )
+# A superset: open questions and risks belong in the ledger as well, because
+# they are exactly what a later round must not drop or re-litigate.
+_LEDGER_RE = re.compile(
+    r"决定|裁决|结论|约定|冻结|禁止|不得|不允许|必须|默认|验收|风险|未决|待定|遗留|阻塞|blocker|TODO"
+)
 _MEMBER_HEAD_RE = re.compile(r"^### (.+?) \(([A-Za-z0-9_./-]+)\) - (.+)$")
 
 
-def extract_summary(text: str, max_chars: int = 4000) -> str:
+def _norm_key(line: str) -> str:
+    return re.sub(r"[\s*`_>#|\-]+", "", line)[:80]
+
+
+def _fit_lines(lines: list[str], limit: int) -> list[str]:
+    """Keep whole lines within *limit*, preferring the newest ones."""
+    kept: list[str] = []
+    total = 0
+    for line in reversed(lines):
+        cost = len(line) + 3
+        if total + cost > limit:
+            break
+        kept.append(line)
+        total += cost
+    kept.reverse()
+    return kept
+
+
+def extract_summary(text: str, max_chars: int = 8000) -> str:
     """Digest *text* without calling a model.
 
-    Each speech keeps its heading plus the lines most likely to matter (its
-    opening claim and up to two decision/constraint lines).  Deterministic,
-    instant, and unable to invent anything — which matters when the host model
-    needs minutes to answer a single chunk.
+    Two sections: a ledger of every decision/constraint/open question found in
+    the text (so later rounds cannot silently drop or re-litigate them), and a
+    per-speaker note with the opening claim.  Deterministic, instant, and
+    unable to invent anything — which matters when the host model needs
+    minutes to answer a single chunk.
     """
     text = text or ""
     entries = list(_ENTRY_RE.finditer(text))
     if not entries:
         return _tail(text, max_chars).strip()
-    per_entry = max(80, max_chars // max(1, len(entries)))
-    blocks: list[str] = []
+
     owner = ""
+    ledger: list[str] = []
+    seen: set[str] = set()
+    points: list[tuple[str, str]] = []
     for index, match in enumerate(entries):
         end = entries[index + 1].start() if index + 1 < len(entries) else len(text)
         heading = match.group(0).strip().lstrip("#").strip()
@@ -233,23 +259,47 @@ def extract_summary(text: str, max_chars: int = 4000) -> str:
             for line in text[match.end() : end].splitlines()
             if line.strip() and not line.lstrip().startswith(("#", "|", "```"))
         ]
-        picks: list[str] = []
         first = next((line for line in lines if len(line) > 12), "")
-        if first:
-            picks.append(first)
+        picks: list[str] = [first] if first else []
         for line in lines:
-            if len(picks) >= 3:
-                break
-            if line in picks or len(line) < 8:
+            if len(line) < 10:
                 continue
-            if _DECISION_RE.search(line):
-                picks.append(line)
+            key = _norm_key(line)
+            if not key or key in seen:
+                continue
+            if line != first and _LEDGER_RE.search(line):
+                seen.add(key)
+                ledger.append(_clip(line, 180))
+                continue
+            if len(picks) < 3 and line not in picks and len(line) >= 8:
+                if _DECISION_RE.search(line):
+                    picks.append(line)
         if not picks:
             continue
-        detail = " / ".join(_clip(line, 90) for line in picks)
-        blocks.append(_clip(f"- **{label}**：{detail}", per_entry))
-    digest = "\n".join(blocks).strip()
-    return digest or _tail(text, max_chars).strip()
+        detail = " / ".join(_clip(line, 80) for line in picks)
+        points.append((label, _clip(detail, 220)))
+
+    ledger_budget = max(300, int(max_chars * 0.5))
+    ledger_lines = _fit_lines(ledger, ledger_budget)
+    used = sum(len(line) + 3 for line in ledger_lines)
+    if ledger_lines:
+        used += len("【决定 / 约束 / 未决】\n")
+    remaining = max(0, max_chars - used)
+    per_entry = max(80, remaining // max(1, len(points))) if points else 0
+    point_lines = [
+        _clip(f"- **{label}**：{detail}", per_entry) for label, detail in points
+    ]
+    point_lines = _fit_lines(point_lines, remaining)
+
+    parts: list[str] = []
+    if ledger_lines:
+        parts.append(
+            "【决定 / 约束 / 未决】\n" + "\n".join(f"- {line}" for line in ledger_lines)
+        )
+    if point_lines:
+        parts.append("【各成员要点】\n" + "\n".join(point_lines))
+    digest = "\n".join(parts).strip()
+    return digest[:max_chars].strip() or _tail(text, max_chars).strip()
 
 
 def _merge_digest(existing: str, digest: str, limit: int) -> str:

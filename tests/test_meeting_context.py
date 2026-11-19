@@ -344,6 +344,53 @@ def test_extract_digest_stays_within_the_summary_budget():
     assert len(result.summary) <= 600
 
 
+def test_extract_keeps_a_decision_ledger_when_the_budget_is_tight():
+    filler = "补充说明。\n" * 600
+
+    def speech(round_num, intro, decision):
+        return f"### 成员 (claude) - 第{round_num}轮\n\n{intro}\n{filler}{decision}\n\n"
+
+    text = (
+        speech(1, "本轮先回顾背景与整体思路。", "决定：冻结 6 crate 方案。")
+        + speech(2, "继续讨论实现细节与边界。", "未决：放码规则由谁维护？")
+        + speech(3, "最新发言：确认收口。", "")
+    )
+
+    result = build_member_context(
+        text,
+        offset=None,
+        settings=_settings(mode="extract", max_summary_chars=800),
+        invoke=None,
+    )
+
+    assert result.compacted is True
+    # Decisions and open questions survive even though the per-speaker notes
+    # are clipped hard.
+    assert "冻结 6 crate 方案" in result.summary
+    assert "未决：放码规则由谁维护" in result.summary
+    assert len(result.summary) <= 800
+
+
+def test_extract_dedupes_repeated_decisions_across_rounds():
+    def speech(round_num):
+        return (
+            f"### 成员 (claude) - 第{round_num}轮\n\n"
+            "本轮先回顾背景与整体思路。\n" + "补充说明。\n" * 600
+            + "决定：默认使用简体中文。\n\n"
+        )
+
+    text = speech(1) + speech(2)
+    result = build_member_context(
+        text,
+        offset=None,
+        settings=_settings(mode="extract", max_summary_chars=800),
+        invoke=None,
+    )
+
+    assert result.compacted is True
+    assert result.summary.count("默认使用简体中文") == 1
+
+
 def test_auto_mode_without_a_summariser_keeps_tail_truncation():
     text = _speech(1, size=9000, marker="开头：")
 

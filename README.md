@@ -1008,26 +1008,26 @@ aqm meeting \
 | 人类发言 | **始终全文保留**，单独一节 `【人类指令 · 全文保留，必须遵守】`，不参与压缩、不会被摘要吞掉 |
 
 - 摘要是**整场会议共享一份**（不是每个成员各一份），存在会议 `meta.json` 的 `context_summary` 里；续会不重算。
-- 只有累计新增超过 `trigger - keep` 才调用一次压缩模型，**不是每轮都调**。
-- 压缩失败自动回退成"尾部截断"，并在会议页留一行提示，不会让会议停下来。
+- 只有累计新增超过 `trigger - keep` 才折叠一次，**不是每轮都折**。
+- 默认 `mode: extract`：**不调用任何模型**，直接从原文抽取「每位成员/每轮 + 开头主张 + 含决定/约束/验收的行」组成摘要。确定性、零延迟、不会编造，也不会因为某个模型响应慢把发言卡住两分钟。
+- 想用模型写更凝练的摘要，设 `mode: llm`，并用 `runtime` / `model` 指定一个够快的模型；这种情况下压缩失败会自动回退成"尾部截断"，并在会议页留一行提示，不会让会议停下来。
 - 修改会议主题导致头部位移时，摘要锚点会自动校正。
 - 会议页在压缩发生时显示：压缩了多少字、摘要多长、保留了几条人类指令。
-
-`runtime` / `model` 留空时用**主持人**（没有主持人就用第一个非人类成员）来压缩。想固定用便宜模型，就填上：
 
 ```yaml
 meeting:
   compact:
     enabled: true
-    trigger_chars: 24000       # 超过这个长度才开始压缩
+    mode: extract              # extract（默认，不调模型）/ llm（调模型）
+    trigger_chars: 24000       # 超过这个长度才开始折叠
     keep_recent_chars: 8000    # 始终保留的原文尾部
     max_summary_chars: 4000    # 摘要上限
-    chunk_chars: 20000         # 每次压缩送入的片段大小
-    max_fold_chars: 48000      # 单次最多折叠多少字（控制调用次数）
+    chunk_chars: 8000          # llm 模式每次压缩送入的片段大小
+    max_fold_chars: 48000      # 单次最多折叠多少字
     max_human_chars: 12000     # 人类指令原文预算，超出丢最旧的
-    runtime: ""                # 空 = 主持人；claude / opencode / ...
+    runtime: ""                # llm 模式：空 = 主持人；claude / opencode / ...
     model: ""
-    timeout: 120
+    timeout: 180
 ```
 
 完全关掉（恢复旧的 8000 字尾部截断）：
@@ -1166,15 +1166,16 @@ server:
 meeting:
   compact:
     enabled: true
+    mode: extract          # extract = 不调模型，直接抽取；llm = 调模型
     trigger_chars: 24000
     keep_recent_chars: 8000
     max_summary_chars: 4000
-    chunk_chars: 20000
+    chunk_chars: 8000
     max_fold_chars: 48000
     max_human_chars: 12000
-    runtime: ""            # 空 = 主持人 / 第一个非人类成员
+    runtime: ""            # llm 模式：空 = 主持人 / 第一个非人类成员
     model: ""
-    timeout: 120
+    timeout: 180
 
 # 新建会议时默认选中的全局团队模板（模板本体在软件根目录 templates/）
 team_template: default-4

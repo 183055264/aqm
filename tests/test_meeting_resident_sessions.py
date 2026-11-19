@@ -574,11 +574,8 @@ def test_meeting_starts_all_sessions_once_and_reuses_them(monkeypatch, tmp_path)
     assert "one turn 1" not in sessions_by_agent["one"].prompts[1]
 
 
-def test_long_meeting_is_compacted_before_the_next_member_reads_it(
-    monkeypatch, tmp_path
-):
-    from aqm.core import meeting_context
-
+def _run_long_compaction_meeting(monkeypatch, tmp_path, *, config=""):
+    """Start a meeting whose shared transcript is long enough to fold."""
     agents = [
         MeetingAgent(id="host", name="会议主持", runtime="claude", role="主持"),
         MeetingAgent(id="dev", name="开发", runtime="claude", role="开发"),
@@ -600,16 +597,9 @@ def test_long_meeting_is_compacted_before_the_next_member_reads_it(
             handle.write(
                 f"### 成员{idx} (claude) - 第1轮\n\n{filler}\n\n"
             )
-
-    summaries = []
-
-    def fake_invoker(*args, **kwargs):
-        def invoke(prompt):
-            summaries.append(prompt)
-            return "【摘要】早前讨论：不做收费功能，先做原型"
-        return invoke
-
-    monkeypatch.setattr(meeting_context, "make_invoker", fake_invoker)
+    if config:
+        (tmp_path / ".aqm").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".aqm" / "config.yaml").write_text(config, encoding="utf-8")
 
     prompts = []
 
@@ -634,6 +624,28 @@ def test_long_meeting_is_compacted_before_the_next_member_reads_it(
         lambda agent, project_root, stop_event: FakeSession(agent),
         raising=False,
     )
+    return meeting, prompts
+
+
+def test_long_meeting_is_compacted_before_the_next_member_reads_it(
+    monkeypatch, tmp_path
+):
+    from aqm.core import meeting_context
+
+    summaries = []
+
+    def fake_invoker(*args, **kwargs):
+        def invoke(prompt):
+            summaries.append(prompt)
+            return "【摘要】早前讨论：不做收费功能，先做原型"
+        return invoke
+
+    monkeypatch.setattr(meeting_context, "make_invoker", fake_invoker)
+    meeting, prompts = _run_long_compaction_meeting(
+        monkeypatch,
+        tmp_path,
+        config="meeting:\n  compact:\n    mode: llm\n",
+    )
 
     _run_meeting(meeting, tmp_path)
 
@@ -654,6 +666,27 @@ def test_long_meeting_is_compacted_before_the_next_member_reads_it(
         )
     )
     assert saved["context_summary"].startswith("【摘要】")
+
+
+def test_long_meeting_is_digested_without_calling_a_model_by_default(
+    monkeypatch, tmp_path
+):
+    from aqm.core import meeting_context
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("default meetings must not call a summariser model")
+
+    monkeypatch.setattr(meeting_context, "make_invoker", refuse)
+    meeting, prompts = _run_long_compaction_meeting(monkeypatch, tmp_path)
+
+    _run_meeting(meeting, tmp_path)
+
+    assert meeting.context_summary
+    assert "成员0" in meeting.context_summary
+    host_prompt = dict(prompts)["host"]
+    assert "【前情摘要】" in host_prompt
+    assert "不要做收费功能" in host_prompt
+    assert meeting.context_pinned_human == ["（第1轮 · 插话）不要做收费功能"]
 
 
 def test_meeting_stops_after_a_round_with_no_successful_agents(monkeypatch, tmp_path):

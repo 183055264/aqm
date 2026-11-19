@@ -287,3 +287,70 @@ def test_resolve_settings_ignores_unknown_keys():
 
     assert "nope" not in settings
     assert settings["enabled"] is False
+
+
+def test_resolve_settings_normalises_the_mode():
+    assert resolve_compact_settings({})["mode"] == "auto"
+    assert resolve_compact_settings({"mode": "EXTRACT"})["mode"] == "extract"
+    assert resolve_compact_settings({"mode": "llm"})["mode"] == "llm"
+    assert resolve_compact_settings({"mode": "bogus"})["mode"] == "auto"
+
+
+class _NoModel:
+    def __call__(self, prompt: str) -> str:
+        raise AssertionError("extract mode must not call a model")
+
+
+def test_extract_mode_digests_old_speeches_without_a_model():
+    text = (
+        _speech(1, size=3000, marker="旧结论：采用 6 crate 切分。")
+        + _speech(2, size=3000, marker="还要保留 geometryHash。")
+        + _speech(3, size=900, marker="最新发言：确认收口。")
+    )
+
+    result = build_member_context(
+        text,
+        offset=None,
+        settings=_settings(mode="extract"),
+        invoke=_NoModel(),
+    )
+
+    assert result.compacted is True
+    assert result.summary_upto == len(text) - 1000
+    # The digest keeps decisions and speaker labels ...
+    assert "采用 6 crate 切分" in result.summary
+    assert "成员" in result.summary
+    # ... while the verbatim part is only the recent tail.
+    recent = result.feed.split("【最新讨论原文】", 1)[1]
+    assert len(recent) <= 1100
+    assert "【前情摘要】" in result.feed
+    assert "最新发言" in result.feed
+
+
+def test_extract_digest_stays_within_the_summary_budget():
+    text = "".join(
+        _speech(round_num, size=2500, marker=f"第{round_num}轮结论：必须保留。")
+        for round_num in range(1, 7)
+    )
+
+    result = build_member_context(
+        text,
+        offset=None,
+        settings=_settings(mode="extract", max_summary_chars=600),
+        invoke=None,
+    )
+
+    assert result.compacted is True
+    assert len(result.summary) <= 600
+
+
+def test_auto_mode_without_a_summariser_keeps_tail_truncation():
+    text = _speech(1, size=9000, marker="开头：")
+
+    result = build_member_context(
+        text, offset=None, settings=_settings(), invoke=None
+    )
+
+    assert result.compacted is False
+    assert result.feed.startswith("...[前文省略]...")
+    assert result.summary == ""

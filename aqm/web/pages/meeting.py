@@ -944,14 +944,24 @@ function dropStreamBlock(agentId, round) {
   delete streamBlocks[key];
 }
 
-function _typeNext() {
-  if (_typing) return;
-  if (!_typeQueue.length) { _typing = false; return; }
-  _typing = true;
-  const task = _typeQueue.shift();
+// Long speeches are printed in one go: typing a 6k-char block would take
+// minutes and would let the next member's streaming block overtake it.
+const _INSTANT_TYPE_CHARS = 1500;
+
+function _liveInsert(node) {
   const out = document.getElementById('liveOutput');
+  if (!out) return;
+  if (liveWaitingEl && liveWaitingEl.parentNode === out) {
+    out.insertBefore(node, liveWaitingEl);
+  } else {
+    out.appendChild(node);
+  }
+}
+
+function _createTypingNode(task) {
   let target;
   let head = null;
+  let host;
   if (task.block) {
     const block = document.createElement('div');
     block.className = 'live-block';
@@ -992,16 +1002,40 @@ function _typeNext() {
     target.className = 'live-body';
     if (task.textColor) target.style.color = task.textColor;
     block.appendChild(target);
-    out.appendChild(block);
+    host = block;
   } else {
     target = document.createElement('span');
     if (task.color) target.style.color = task.color;
-    out.appendChild(target);
+    host = target;
   }
-  if (liveWaitingEl) out.appendChild(liveWaitingEl);
+  // Claim the DOM slot now, in arrival order. Streamed blocks are appended
+  // as soon as their first chunk lands, so a line that waited in the typing
+  // queue would otherwise show up *after* speeches that started later.
+  _liveInsert(host);
+  task.target = target;
+  task.headEl = head;
+}
+
+function _typeNext() {
+  if (_typing) return;
+  if (!_typeQueue.length) { _typing = false; return; }
+  _typing = true;
+  const task = _typeQueue.shift();
+  if (!task.target || !task.target.isConnected) _createTypingNode(task);
+  const out = document.getElementById('liveOutput');
+  const target = task.target;
+  const head = task.headEl;
   const text = String(task.text || '');
   const headText = String(task.head || '');
   const total = text.length;
+  if (total > _INSTANT_TYPE_CHARS) {
+    target.textContent = text;
+    if (head) head.textContent = headText;
+    if (out) out.scrollTop = out.scrollHeight;
+    _typing = false;
+    _typeNext();
+    return;
+  }
   const step = Math.max(8, Math.floor(total / 200));
   let idx = 0;
   function tick() {
@@ -1015,7 +1049,7 @@ function _typeNext() {
       // The header is short; reveal it with the first chunk of the body.
       head.textContent = headText;
     }
-    out.scrollTop = out.scrollHeight;
+    if (out) out.scrollTop = out.scrollHeight;
     if (idx >= total) {
       if (head) head.textContent = headText;
       _typing = false;
@@ -1030,6 +1064,7 @@ function _typeNext() {
 function _enqueueTyping(text, options) {
   const task = { text: text };
   if (options) Object.assign(task, options);
+  _createTypingNode(task);
   _typeQueue.push(task);
   _typeNext();
 }
@@ -1249,7 +1284,8 @@ function showLiveView(meetingId, meeting) {
   });
   eventSource.addEventListener('context_compacted', e => {
     const d = JSON.parse(e.data);
-    let msg = `\n[第 ${d.round} 轮] 会议记录较长：前 ${d.summarized_chars} 字已压缩为摘要`
+    const action = d.mode === 'extract' ? '已自动摘录为要点' : '已压缩为摘要';
+    let msg = `\n[第 ${d.round} 轮] 会议记录较长：前 ${d.summarized_chars} 字${action}`
       + `（摘要 ${d.summary_chars} 字）`;
     if (d.pinned_human) msg += `，另有 ${d.pinned_human} 条人类指令全文保留`;
     if (d.dropped_chars) msg += `；更早的 ${d.dropped_chars} 字未纳入摘要`;

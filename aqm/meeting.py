@@ -1344,6 +1344,12 @@ def _prepare_compaction(
     settings = resolve_compact_settings(raw)
     if not settings.get("enabled"):
         return settings, None
+    if settings.get("mode") != "llm":
+        # Meetings default to the deterministic digest: one model call per
+        # chunk takes ~100s here and would stall the speaker on every fold.
+        settings["mode"] = "extract"
+        logger.info("[MeetingCompaction] extractive digest (no model calls)")
+        return settings, None
     runtime_name, model = _compact_backend(meeting, settings)
     try:
         invoker = make_invoker(
@@ -1629,6 +1635,7 @@ def _run_meeting(
                                     "dropped_chars": compacted.dropped_chars,
                                     "summary_chars": len(compacted.summary),
                                     "pinned_human": len(compacted.pinned_human),
+                                    "mode": compact_settings.get("mode") or "extract",
                                     "round": round_num,
                                 },
                             )

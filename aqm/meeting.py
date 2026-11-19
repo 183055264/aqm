@@ -62,6 +62,13 @@ class MeetingAgent:
     error: str = ""
     rounds_completed: list[int] = field(default_factory=list)
     resident: bool = False
+    # Per-member cap on the unread slice; 0 = use meeting.compact.context_limit.
+    context_limit: int = 0
+    # Each member folds its own unread slice: one member's compaction must not
+    # shrink the verbatim window of another.
+    context_summary: str = ""
+    context_summary_upto: int = 0
+    context_pinned_human: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.runtime == "claude":
@@ -132,6 +139,9 @@ class Meeting:
                     "error": a.error,
                     "rounds_completed": list(a.rounds_completed),
                     "resident": a.resident,
+                    "context_limit": a.context_limit,
+                    "context_summary_chars": len(a.context_summary or ""),
+                    "context_pinned_human": len(a.context_pinned_human or []),
                 }
                 for a in self.agents
             ],
@@ -180,6 +190,10 @@ class Meeting:
                     "actions": a.actions,
                     "error": a.error,
                     "rounds_completed": list(a.rounds_completed),
+                    "context_limit": a.context_limit,
+                    "context_summary": a.context_summary,
+                    "context_summary_upto": a.context_summary_upto,
+                    "context_pinned_human": list(a.context_pinned_human),
                 }
                 for a in self.agents
             ],
@@ -329,6 +343,7 @@ def create_meeting(
             system_prompt=a.get("system_prompt", ""),
             model=a.get("model", ""),
             directory_access=a.get("directory_access", ""),
+            context_limit=int(a.get("context_limit") or 0),
         ) for a in agents],
         shared_file=shared_file,
         rounds=rounds,
@@ -503,6 +518,7 @@ def update_meeting(
                 system_prompt=a.get("system_prompt", ""),
                 model=a.get("model", ""),
                 directory_access=a.get("directory_access", ""),
+                context_limit=int(a.get("context_limit") or 0),
             )
             old = previous.get(agent.id)
             # "Save and continue" must not replay rounds for members whose
@@ -1106,15 +1122,26 @@ def _sync_shared_header(meeting: Meeting, project_root: Path) -> None:
         if new_text == text:
             return
         # Every speech after the header shifts by the header delta; keep the
-        # rolling-summary anchor aligned with the rewritten file.
+        # rolling-summary anchors aligned with the rewritten file.
         delta = len(new_text) - len(text)
-        if delta and meeting.context_summary:
-            anchored = meeting.context_summary_upto + delta
-            if anchored <= 0:
-                meeting.context_summary = ""
-                meeting.context_summary_upto = 0
-            else:
-                meeting.context_summary_upto = anchored
+        if delta:
+            if meeting.context_summary:
+                anchored = meeting.context_summary_upto + delta
+                if anchored <= 0:
+                    meeting.context_summary = ""
+                    meeting.context_summary_upto = 0
+                else:
+                    meeting.context_summary_upto = anchored
+            for agent in meeting.agents:
+                if not agent.context_summary:
+                    continue
+                anchored = agent.context_summary_upto + delta
+                if anchored <= 0:
+                    agent.context_summary = ""
+                    agent.context_summary_upto = 0
+                    agent.context_pinned_human = []
+                else:
+                    agent.context_summary_upto = anchored
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(new_text, encoding="utf-8")
         os.replace(tmp_path, path)
@@ -1363,10 +1390,10 @@ def _prepare_compaction(
         logger.warning("[MeetingCompaction] could not build summariser: %s", exc)
         return settings, None
     logger.info(
-        "[MeetingCompaction] enabled (runtime=%s model=%s trigger=%s keep=%s)",
+        "[MeetingCompaction] enabled (runtime=%s model=%s limit=%s keep=%s)",
         runtime_name or "claude",
         model or "-",
-        settings.get("trigger_chars"),
+        settings.get("context_limit"),
         settings.get("keep_recent_chars"),
     )
     return settings, invoker
@@ -1595,55 +1622,125 @@ def _run_meeting(
                     )
                     if shared_path.exists():
                         text = shared_path.read_text(encoding="utf-8")
+                        member_settings = compact_settings
+                        if agent.context_limit:
+                            member_settings = dict(compact_settings)
+                            member_settings["context_limit"] = agent.context_limit
+                        member_limit = int(
+                            member_settings.get("context_limit")
+                            or member_settings.get("trigger_chars")
+                            or 0
+                        )
+                        # Legacy/global summary seeds a member that has never
+                        # folded on its own.  After that each member keeps its
+                        # own summary, so folding never shrinks the verbatim
+                        # window of another member.
+                        if (
+                            not agent.context_summary
+                            and meeting.context_summary
+                        ):
+                            agent.context_summary = meeting.context_summary
+                            agent.context_summary_upto = (
+                                meeting.context_summary_upto
+                            )
+                            agent.context_pinned_human = list(
+                                meeting.context_pinned_human
+                            )
+                        pending = len(text) - max(
+                            agent.context_summary_upto,
+                            shared_offsets.get(i, 0) or 0,
+                        )
+                        can_fold = bool(
+                            member_settings.get("enabled", True)
+                            and (
+                                compact_invoker is not None
+                                or member_settings.get("mode") == "extract"
+                            )
+                        )
+                        will_fold = (
+                            can_fold and member_limit > 0 and pending > member_limit
+                        )
+                        if will_fold:
+                            keep_recent = int(
+                                member_settings.get("keep_recent_chars") or 12000
+                            )
+                            fold_preview = max(
+                                0,
+                                len(text)
+                                - keep_recent
+                                - agent.context_summary_upto,
+                            )
+                            streamer.process(
+                                f"【上下文压缩】本轮待读 {pending} 字，"
+                                f"超过我的上限 {member_limit} 字，"
+                                f"正在把较早的 {fold_preview} 字折进我的摘要…"
+                            )
                         compacted = build_member_context(
                             text,
                             offset=shared_offsets.get(i),
-                            summary=meeting.context_summary,
-                            summary_upto=meeting.context_summary_upto,
-                            pinned_human=meeting.context_pinned_human,
-                            settings=compact_settings,
+                            summary=agent.context_summary,
+                            summary_upto=agent.context_summary_upto,
+                            pinned_human=agent.context_pinned_human,
+                            settings=member_settings,
                             invoke=compact_invoker,
                         )
                         context = compacted.feed
                         if (
-                            compacted.summary != meeting.context_summary
+                            compacted.summary != agent.context_summary
                             or compacted.summary_upto
-                            != meeting.context_summary_upto
+                            != agent.context_summary_upto
                             or compacted.pinned_human
-                            != meeting.context_pinned_human
+                            != agent.context_pinned_human
                         ):
-                            meeting.context_summary = compacted.summary
-                            meeting.context_summary_upto = compacted.summary_upto
-                            meeting.context_pinned_human = list(
+                            agent.context_summary = compacted.summary
+                            agent.context_summary_upto = compacted.summary_upto
+                            agent.context_pinned_human = list(
                                 compacted.pinned_human
                             )
                             _save_meeting(meeting, project_root)
                         if compacted.compacted:
                             logger.info(
-                                "[MeetingCompaction] meeting=%s folded %d chars "
+                                "[MeetingCompaction] meeting=%s agent=%s folded %d chars "
                                 "(dropped %d, summary %d, humans %d)",
                                 meeting.id,
+                                agent.id,
                                 compacted.summarized_chars,
                                 compacted.dropped_chars,
                                 len(compacted.summary),
                                 len(compacted.pinned_human),
                             )
+                            streamer.process(
+                                f"【上下文压缩】完成：折叠 "
+                                f"{compacted.summarized_chars} 字，摘要 "
+                                f"{len(compacted.summary)} 字，人类指令 "
+                                f"{len(compacted.pinned_human)} 条全文保留"
+                            )
                             broadcast_meeting_event(
                                 meeting.id, "context_compacted", {
                                     "meeting_id": meeting.id,
+                                    "agent_id": agent.id,
+                                    "agent_name": agent.name,
+                                    "runtime": agent.runtime,
+                                    "pending_chars": pending,
+                                    "limit_chars": member_limit,
                                     "summarized_chars": compacted.summarized_chars,
                                     "dropped_chars": compacted.dropped_chars,
                                     "summary_chars": len(compacted.summary),
                                     "pinned_human": len(compacted.pinned_human),
-                                    "mode": compact_settings.get("mode") or "extract",
+                                    "mode": member_settings.get("mode") or "extract",
                                     "round": round_num,
                                 },
                             )
                         if compacted.error:
                             logger.warning(
-                                "[MeetingCompaction] meeting=%s %s",
-                                meeting.id, compacted.error,
+                                "[MeetingCompaction] meeting=%s agent=%s %s",
+                                meeting.id, agent.id, compacted.error,
                             )
+                            if will_fold:
+                                streamer.process(
+                                    f"【上下文压缩】失败：{compacted.error}，"
+                                    f"本轮改用尾部截断"
+                                )
 
                     prompt = (
                         f"【项目背景】\n{meeting.description}\n\n"

@@ -340,7 +340,7 @@ function addAgentRow(agent) {
   const row = document.createElement('div');
   const listId = `ag-model-list-${++agentRowSeq}`;
   const runtime = (agent && agent.runtime) || 'claude';
-  row.style.cssText = 'display:grid;grid-template-columns:0.9fr 1.3fr 0.9fr 2fr auto;gap:8px;margin-bottom:8px;align-items:start;';
+  row.style.cssText = 'display:grid;grid-template-columns:0.9fr 1.3fr 0.7fr 0.9fr 2fr auto;gap:8px;margin-bottom:8px;align-items:start;';
   row.dataset.modelRuntime = runtime;
   row.innerHTML = `
     <div class="form-group" style="margin-bottom:0;">
@@ -357,6 +357,10 @@ function addAgentRow(agent) {
       <label style="font-size:12px;">模型</label>
       <input class="ag-model" type="text" list="${listId}" value="${escapeValue(agent&&agent.model)}" placeholder="选择或输入模型" style="width:100%;">
       <datalist class="ag-model-list" id="${listId}"></datalist>
+    </div>
+    <div class="form-group ag-limit-group" style="margin-bottom:0;">
+      <label style="font-size:12px;" title="本轮待读超过这个字数就自动压缩；留空用会议默认 48000">压缩上限</label>
+      <input class="ag-limit" type="number" min="0" step="1000" value="${agent&&agent.context_limit?agent.context_limit:''}" placeholder="48000" style="width:100%;">
     </div>
     <div class="form-group" style="margin-bottom:0;">
       <label style="font-size:12px;">角色</label>
@@ -378,6 +382,10 @@ function applyRuntimeFields(row) {
   const modelGroup = row.querySelector('.ag-model-group');
   if (modelGroup) {
     modelGroup.style.visibility = runtime === 'human' ? 'hidden' : 'visible';
+  }
+  const limitGroup = row.querySelector('.ag-limit-group');
+  if (limitGroup) {
+    limitGroup.style.visibility = runtime === 'human' ? 'hidden' : 'visible';
   }
   const input = row.querySelector('.ag-model');
   if (runtime === 'human' && input) input.value = '';
@@ -486,6 +494,8 @@ async function createAndStartMeeting() {
     const role = row.querySelector('.ag-role').value.trim();
     const prompt = row.querySelector('.ag-prompt').value.trim();
     const modelInput = row.querySelector('.ag-model');
+    const limitInput = row.querySelector('.ag-limit');
+    const limit = limitInput ? parseInt(limitInput.value, 10) : 0;
     agents.push({
       id,
       name: role || id,
@@ -494,6 +504,7 @@ async function createAndStartMeeting() {
       system_prompt: prompt,
       model: runtime === 'human' ? '' : (modelInput ? modelInput.value.trim() : ''),
       directory_access: runtime === 'claude' ? 'project_read_write' : '',
+      context_limit: runtime === 'human' || !limit || limit < 0 ? 0 : limit,
     });
   });
 
@@ -1284,9 +1295,12 @@ function showLiveView(meetingId, meeting) {
   });
   eventSource.addEventListener('context_compacted', e => {
     const d = JSON.parse(e.data);
-    const action = d.mode === 'extract' ? '已自动摘录为要点' : '已压缩为摘要';
-    let msg = `\n[第 ${d.round} 轮] 会议记录较长：前 ${d.summarized_chars} 字${action}`
-      + `（摘要 ${d.summary_chars} 字）`;
+    const who = d.agent_name ? `${agentLabel(d.agent_name, d.runtime)} ` : '';
+    const action = d.mode === 'extract' ? '已自动折进摘要' : '已压缩为摘要';
+    let msg = d.pending_chars
+      ? `\n[第 ${d.round} 轮] ${who}检测到待读 ${d.pending_chars} 字超过上限 ${d.limit_chars}，${action}`
+      : `\n[第 ${d.round} 轮] ${who}会议记录较长：前 ${d.summarized_chars} 字${action}`;
+    msg += `（摘要 ${d.summary_chars} 字）`;
     if (d.pinned_human) msg += `，另有 ${d.pinned_human} 条人类指令全文保留`;
     if (d.dropped_chars) msg += `；更早的 ${d.dropped_chars} 字未纳入摘要`;
     _enqueueTyping(msg + '\n', { color: '#8b949e' });

@@ -26,8 +26,10 @@ DEFAULT_COMPACT_SETTINGS: dict = {
     # "auto" uses the model when a summariser is supplied and plain extraction
     # otherwise; "extract" never calls a model; "llm" always does.
     "mode": "auto",
-    # Compact only when the transcript is longer than this.
+    # Compact only when a member's own unread slice is longer than this.
     "trigger_chars": 48000,
+    # Per-member cap on the unread slice; 0/absent falls back to trigger_chars.
+    "context_limit": 48000,
     # Always keep this much of the transcript verbatim at the tail.
     "keep_recent_chars": 12000,
     # Upper bound for the rolling summary.
@@ -50,12 +52,14 @@ _HUMAN_HEAD_RE = re.compile(r"^### (.+?) \(human\) - (.+)$")
 
 def resolve_compact_settings(raw: dict | None) -> dict:
     """Merge a project's ``meeting.compact`` block with the defaults."""
+    raw = raw or {}
     settings = dict(DEFAULT_COMPACT_SETTINGS)
-    for key, value in (raw or {}).items():
+    for key, value in raw.items():
         if key in settings and value is not None:
             settings[key] = value
     for key, floor in (
         ("trigger_chars", 4000),
+        ("context_limit", 0),
         ("keep_recent_chars", 1000),
         ("max_summary_chars", 500),
         ("chunk_chars", 4000),
@@ -72,9 +76,28 @@ def resolve_compact_settings(raw: dict | None) -> dict:
     settings["mode"] = mode if mode in ("auto", "extract", "llm") else "auto"
     settings["runtime"] = str(settings.get("runtime") or "")
     settings["model"] = str(settings.get("model") or "")
+    # ``trigger_chars`` is the legacy name; ``context_limit`` is the per-member
+    # cap.  Keep them interchangeable so old project configs keep working.
+    if raw.get("context_limit") is None:
+        settings["context_limit"] = settings["trigger_chars"]
+    elif not settings["context_limit"]:
+        settings["context_limit"] = settings["trigger_chars"] or 48000
+    settings["trigger_chars"] = settings["context_limit"]
     # Compacting a slice smaller than what we keep verbatim is pointless.
-    if settings["keep_recent_chars"] >= settings["trigger_chars"]:
-        settings["trigger_chars"] = settings["keep_recent_chars"] * 2
+    if settings["keep_recent_chars"] >= settings["context_limit"]:
+        explicit_limit = (
+            raw.get("context_limit") is not None
+            or raw.get("trigger_chars") is not None
+        )
+        if explicit_limit:
+            # The user asked for this window; shrink the verbatim tail instead
+            # of silently raising their threshold.
+            settings["keep_recent_chars"] = max(
+                1000, settings["context_limit"] // 2
+            )
+        else:
+            settings["context_limit"] = settings["keep_recent_chars"] * 2
+            settings["trigger_chars"] = settings["context_limit"]
     return settings
 
 
@@ -376,8 +399,12 @@ def build_member_context(
     settings = settings or resolve_compact_settings(None)
     transcript = transcript or ""
     total = len(transcript)
-    keep = int(settings.get("keep_recent_chars") or 8000)
-    trigger = int(settings.get("trigger_chars") or 24000)
+    keep = int(settings.get("keep_recent_chars") or 12000)
+    limit = int(
+        settings.get("context_limit")
+        or settings.get("trigger_chars")
+        or 48000
+    )
     max_human = int(settings.get("max_human_chars") or 0)
     pinned = list(pinned_human or [])
 
@@ -412,10 +439,10 @@ def build_member_context(
     base = max(result.summary_upto, start)
 
     # Small meeting (or little since the last compaction): no model call.
-    if not result.summary and total <= trigger:
+    if not result.summary and total <= limit:
         result.feed = transcript[start:]
         return result
-    if total - base <= trigger:
+    if total - base <= limit:
         result.feed = _compose(result.summary, pinned, transcript[base:])
         return result
 

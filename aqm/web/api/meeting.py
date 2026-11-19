@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from starlette.responses import StreamingResponse
 
 from aqm.meeting import (
@@ -38,6 +38,8 @@ class MeetingAgentConfig(BaseModel):
     system_prompt: str = ""
     model: str = ""
     directory_access: str = ""
+    # Per-member cap on the unread slice; 0 = meeting.compact.context_limit.
+    context_limit: int = Field(default=0, ge=0, le=1_000_000)
 
     @field_validator("directory_access")
     @classmethod

@@ -296,6 +296,35 @@ def test_resolve_settings_normalises_the_mode():
     assert resolve_compact_settings({"mode": "bogus"})["mode"] == "auto"
 
 
+def test_context_limit_defaults_to_48000_and_aliases_trigger_chars():
+    assert resolve_compact_settings({})["context_limit"] == 48000
+    # Legacy configs only knew trigger_chars, and an explicit window is kept
+    # even when it is smaller than the default verbatim tail.
+    legacy = resolve_compact_settings({"trigger_chars": 9000})
+    assert legacy["context_limit"] == 9000
+    assert legacy["keep_recent_chars"] < 9000
+    # A member override wins.
+    settings = resolve_compact_settings({"context_limit": 20000})
+    assert settings["context_limit"] == 20000
+    assert settings["trigger_chars"] == 20000
+
+
+def test_context_limit_triggers_folding_before_the_legacy_threshold():
+    text = _speech(1, size=3000) + _speech(2, size=900)
+
+    # The delta is well under trigger_chars=4000, but the member only tolerates
+    # 1500 characters, so it folds its own unread slice.
+    result = build_member_context(
+        text,
+        offset=None,
+        settings=_settings(mode="extract", context_limit=1500),
+        invoke=None,
+    )
+
+    assert result.compacted is True
+    assert "【前情摘要】" in result.feed
+
+
 class _NoModel:
     def __call__(self, prompt: str) -> str:
         raise AssertionError("extract mode must not call a model")

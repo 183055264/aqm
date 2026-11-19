@@ -574,11 +574,19 @@ def test_meeting_starts_all_sessions_once_and_reuses_them(monkeypatch, tmp_path)
     assert "one turn 1" not in sessions_by_agent["one"].prompts[1]
 
 
-def _run_long_compaction_meeting(monkeypatch, tmp_path, *, config=""):
+def _run_long_compaction_meeting(
+    monkeypatch, tmp_path, *, config="", speeches=6, limits=(0, 0)
+):
     """Start a meeting whose shared transcript is long enough to fold."""
     agents = [
-        MeetingAgent(id="host", name="会议主持", runtime="claude", role="主持"),
-        MeetingAgent(id="dev", name="开发", runtime="claude", role="开发"),
+        MeetingAgent(
+            id="host", name="会议主持", runtime="claude", role="主持",
+            context_limit=limits[0],
+        ),
+        MeetingAgent(
+            id="dev", name="开发", runtime="claude", role="开发",
+            context_limit=limits[1],
+        ),
     ]
     meeting = Meeting(
         id="compact-test",
@@ -593,7 +601,7 @@ def _run_long_compaction_meeting(monkeypatch, tmp_path, *, config=""):
     with open(shared, "a", encoding="utf-8") as handle:
         handle.write("\n## 第 1 轮讨论\n\n")
         handle.write("### 人类参与者 (human) - 第1轮 · 插话\n\n不要做收费功能\n\n")
-        for idx in range(6):
+        for idx in range(speeches):
             handle.write(
                 f"### 成员{idx} (claude) - 第1轮\n\n{filler}\n\n"
             )
@@ -654,18 +662,48 @@ def test_long_meeting_is_compacted_before_the_next_member_reads_it(
     assert "【前情摘要】" in host_prompt
     assert "【人类指令 · 全文保留，必须遵守】" in host_prompt
     assert "不要做收费功能" in host_prompt
-    # The second member reuses the persisted summary instead of folding again.
+    # Each member folds its own unread slice; both keep exactly one summary.
     assert dict(prompts)["dev"].count("【前情摘要】") == 1
-    assert meeting.context_summary.startswith("【摘要】")
-    assert meeting.context_summary_upto > 0
-    assert meeting.context_pinned_human == ["（第1轮 · 插话）不要做收费功能"]
+    assert meeting.agents[0].context_summary.startswith("【摘要】")
+    assert meeting.agents[0].context_summary_upto > 0
+    assert meeting.agents[0].context_pinned_human == [
+        "（第1轮 · 插话）不要做收费功能"
+    ]
 
     saved = json.loads(
         (tmp_path / ".aqm" / "meetings" / "compact-test" / "meta.json").read_text(
             encoding="utf-8"
         )
     )
-    assert saved["context_summary"].startswith("【摘要】")
+    assert saved["agents"][0]["context_summary"].startswith("【摘要】")
+
+
+def test_member_fold_does_not_shrink_another_members_verbatim_window(
+    monkeypatch, tmp_path
+):
+    """A small limit on one member must not compact everyone else."""
+    from aqm.core import meeting_context
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("extract mode must not call a model")
+
+    monkeypatch.setattr(meeting_context, "make_invoker", refuse)
+    # Host folds early; dev stays under the default 48000 window.
+    meeting, prompts = _run_long_compaction_meeting(
+        monkeypatch, tmp_path, speeches=4, limits=(9000, 0)
+    )
+
+    _run_meeting(meeting, tmp_path)
+
+    host_prompt = dict(prompts)["host"]
+    dev_prompt = dict(prompts)["dev"]
+    # The host folded its own slice ...
+    assert "【前情摘要】" in host_prompt
+    assert meeting.agents[0].context_summary
+    # ... but the dev still sees the whole unread transcript verbatim.
+    assert "【前情摘要】" not in dev_prompt
+    assert "讨论内容" * 10 in dev_prompt
+    assert not meeting.agents[1].context_summary
 
 
 def test_long_meeting_is_digested_without_calling_a_model_by_default(
@@ -681,12 +719,93 @@ def test_long_meeting_is_digested_without_calling_a_model_by_default(
 
     _run_meeting(meeting, tmp_path)
 
-    assert meeting.context_summary
-    assert "成员0" in meeting.context_summary
+    assert meeting.agents[0].context_summary
+    assert "成员0" in meeting.agents[0].context_summary
     host_prompt = dict(prompts)["host"]
     assert "【前情摘要】" in host_prompt
     assert "不要做收费功能" in host_prompt
-    assert meeting.context_pinned_human == ["（第1轮 · 插话）不要做收费功能"]
+    assert meeting.agents[0].context_pinned_human == [
+        "（第1轮 · 插话）不要做收费功能"
+    ]
+
+
+def test_member_limit_folds_its_own_slice_and_reports_progress(
+    monkeypatch, tmp_path
+):
+    from aqm.core import meeting_context
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("the default member fold must not call a model")
+
+    monkeypatch.setattr(meeting_context, "make_invoker", refuse)
+    events = []
+    monkeypatch.setattr(
+        meeting_mod,
+        "broadcast_meeting_event",
+        lambda mid, ev, data: events.append((ev, data)),
+    )
+    meeting, prompts = _run_long_compaction_meeting(
+        monkeypatch,
+        tmp_path,
+        # Only the host uses the small window; the dev keeps the 48000 default.
+        speeches=3,
+        limits=(12000, 0),
+    )
+
+    _run_meeting(meeting, tmp_path)
+
+    compacted = [d for ev, d in events if ev == "context_compacted"]
+    assert compacted, "the first member's unread slice should be folded"
+    # Only the member that exceeded its own limit folds.
+    assert {d["agent_id"] for d in compacted} == {"host"}
+    assert compacted[0]["limit_chars"] == 12000
+    assert compacted[0]["pending_chars"] > 12000
+    assert compacted[0]["mode"] == "extract"
+    assert meeting.agents[0].context_summary_upto > 0
+    # The speaker still gets a usable context, and the human note survives.
+    assert "【前情摘要】" in dict(prompts)["host"]
+    assert "不要做收费功能" in dict(prompts)["host"]
+
+    process = "".join(
+        d["chunk"]
+        for ev, d in events
+        if ev == "agent_stream"
+        and d["agent_id"] == "host"
+        and d["kind"] == "process"
+    )
+    assert "超过我的上限 12000 字" in process
+    assert "正在把较早的" in process
+    assert "折进我的摘要" in process
+    assert "完成：折叠" in process
+    assert "人类指令" in process
+
+
+def test_member_without_an_override_uses_the_meeting_limit(monkeypatch, tmp_path):
+    from aqm.core import meeting_context
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("extract mode must not call a model")
+
+    monkeypatch.setattr(meeting_context, "make_invoker", refuse)
+    events = []
+    monkeypatch.setattr(
+        meeting_mod,
+        "broadcast_meeting_event",
+        lambda mid, ev, data: events.append((ev, data)),
+    )
+    # A tiny per-member limit for the host only; dev inherits 48000.
+    meeting, _ = _run_long_compaction_meeting(
+        monkeypatch,
+        tmp_path,
+        speeches=3,
+        limits=(9000, 0),
+    )
+
+    _run_meeting(meeting, tmp_path)
+
+    compacted = [d for ev, d in events if ev == "context_compacted"]
+    assert [d["agent_id"] for d in compacted] == ["host"]
+    assert compacted[0]["limit_chars"] == 9000
 
 
 def test_meeting_stops_after_a_round_with_no_successful_agents(monkeypatch, tmp_path):
@@ -955,7 +1074,21 @@ def test_editing_a_meeting_overwrites_the_shared_header_in_place(tmp_path):
 
 
 def test_meeting_context_summary_survives_a_round_trip():
-    meeting = Meeting(id="ctx", topic="t")
+    meeting = Meeting(
+        id="ctx",
+        topic="t",
+        agents=[
+            MeetingAgent(
+                id="a",
+                name="A",
+                runtime="claude",
+                context_limit=16000,
+                context_summary="成员自己的摘要",
+                context_summary_upto=800,
+                context_pinned_human=["成员的指令"],
+            )
+        ],
+    )
     meeting.context_summary = "早前讨论摘要"
     meeting.context_summary_upto = 1200
     meeting.context_pinned_human = ["（第1轮）人类指令"]
@@ -965,6 +1098,11 @@ def test_meeting_context_summary_survives_a_round_trip():
     assert restored.context_summary == "早前讨论摘要"
     assert restored.context_summary_upto == 1200
     assert restored.context_pinned_human == ["（第1轮）人类指令"]
+    agent = restored.agents[0]
+    assert agent.context_limit == 16000
+    assert agent.context_summary == "成员自己的摘要"
+    assert agent.context_summary_upto == 800
+    assert agent.context_pinned_human == ["成员的指令"]
 
 
 def test_header_rewrite_shifts_the_summary_anchor(tmp_path):
@@ -982,6 +1120,9 @@ def test_header_rewrite_shifts_the_summary_anchor(tmp_path):
     before = len(shared.read_text(encoding="utf-8"))
     meeting.context_summary = "摘要"
     meeting.context_summary_upto = before
+    meeting.agents[0].context_summary = "成员摘要"
+    meeting.agents[0].context_summary_upto = before
+    meeting.agents[0].context_pinned_human = ["成员指令"]
 
     meeting.topic = "一个明显更长的会议标题，用来制造头部位移"
     meeting_mod._sync_shared_header(meeting, tmp_path)
@@ -989,6 +1130,8 @@ def test_header_rewrite_shifts_the_summary_anchor(tmp_path):
     after = len(shared.read_text(encoding="utf-8"))
     assert after != before
     assert meeting.context_summary_upto == before + (after - before)
+    assert meeting.agents[0].context_summary_upto == before + (after - before)
+    assert meeting.agents[0].context_pinned_human == ["成员指令"]
     assert "正文" in shared.read_text(encoding="utf-8")
 
 

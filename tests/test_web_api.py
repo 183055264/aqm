@@ -817,6 +817,40 @@ class TestMeetingAPI:
         restored = client.get(f"/api/meetings/{meeting_id}")
         assert restored.json()["agents"][0]["directory_access"] == "project_read_write"
 
+    def test_member_context_limit_is_saved_and_validated(self, client):
+        response = client.post("/api/meetings", json={
+            "topic": "context limit",
+            "agents": [{
+                "id": "claude",
+                "name": "Claude",
+                "runtime": "claude",
+                "context_limit": 24000,
+            }],
+        })
+
+        assert response.status_code == 200
+        meeting_id = response.json()["id"]
+        assert response.json()["agents"][0]["context_limit"] == 24000
+        restored = client.get(f"/api/meetings/{meeting_id}")
+        assert restored.json()["agents"][0]["context_limit"] == 24000
+
+        default = client.post("/api/meetings", json={
+            "topic": "default limit",
+            "agents": [{"id": "c", "name": "C", "runtime": "claude"}],
+        })
+        assert default.json()["agents"][0]["context_limit"] == 0
+
+        bad = client.post("/api/meetings", json={
+            "topic": "bad limit",
+            "agents": [{
+                "id": "c",
+                "name": "C",
+                "runtime": "claude",
+                "context_limit": -1,
+            }],
+        })
+        assert bad.status_code == 422
+
     def test_directory_access_is_rejected_for_unsupported_runtime(self, client):
         response = client.post("/api/meetings", json={
             "topic": "Unsupported directory access",

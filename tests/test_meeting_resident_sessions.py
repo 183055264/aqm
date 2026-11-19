@@ -574,6 +574,88 @@ def test_meeting_starts_all_sessions_once_and_reuses_them(monkeypatch, tmp_path)
     assert "one turn 1" not in sessions_by_agent["one"].prompts[1]
 
 
+def test_long_meeting_is_compacted_before_the_next_member_reads_it(
+    monkeypatch, tmp_path
+):
+    from aqm.core import meeting_context
+
+    agents = [
+        MeetingAgent(id="host", name="会议主持", runtime="claude", role="主持"),
+        MeetingAgent(id="dev", name="开发", runtime="claude", role="开发"),
+    ]
+    meeting = Meeting(
+        id="compact-test",
+        topic="长会议",
+        agents=agents,
+        rounds=1,
+        status=MeetingStatus.running.value,
+    )
+    meeting_mod._sync_shared_header(meeting, tmp_path)
+    shared = meeting_mod.get_shared_file_path(meeting, tmp_path)
+    filler = "讨论内容" * 2500
+    with open(shared, "a", encoding="utf-8") as handle:
+        handle.write("\n## 第 1 轮讨论\n\n")
+        handle.write("### 人类参与者 (human) - 第1轮 · 插话\n\n不要做收费功能\n\n")
+        for idx in range(3):
+            handle.write(
+                f"### 成员{idx} (claude) - 第1轮\n\n{filler}\n\n"
+            )
+
+    summaries = []
+
+    def fake_invoker(*args, **kwargs):
+        def invoke(prompt):
+            summaries.append(prompt)
+            return "【摘要】早前讨论：不做收费功能，先做原型"
+        return invoke
+
+    monkeypatch.setattr(meeting_context, "make_invoker", fake_invoker)
+
+    prompts = []
+
+    class FakeSession:
+        def __init__(self, agent):
+            self.agent = agent
+
+        @property
+        def is_alive(self):
+            return True
+
+        def run(self, prompt, timeout, stop_event, **kwargs):
+            prompts.append((self.agent.id, prompt))
+            return f"{self.agent.name} 发言"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        meeting_session,
+        "start_meeting_agent_session",
+        lambda agent, project_root, stop_event: FakeSession(agent),
+        raising=False,
+    )
+
+    _run_meeting(meeting, tmp_path)
+
+    assert summaries, "the long transcript should be compacted"
+    host_prompt = dict(prompts)["host"]
+    assert "【前情摘要】" in host_prompt
+    assert "【人类指令 · 全文保留，必须遵守】" in host_prompt
+    assert "不要做收费功能" in host_prompt
+    # The second member reuses the persisted summary instead of folding again.
+    assert dict(prompts)["dev"].count("【前情摘要】") == 1
+    assert meeting.context_summary.startswith("【摘要】")
+    assert meeting.context_summary_upto > 0
+    assert meeting.context_pinned_human == ["（第1轮 · 插话）不要做收费功能"]
+
+    saved = json.loads(
+        (tmp_path / ".aqm" / "meetings" / "compact-test" / "meta.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved["context_summary"].startswith("【摘要】")
+
+
 def test_meeting_stops_after_a_round_with_no_successful_agents(monkeypatch, tmp_path):
     agents = [
         MeetingAgent(id="one", name="one", runtime="claude"),
@@ -837,6 +919,44 @@ def test_editing_a_meeting_overwrites_the_shared_header_in_place(tmp_path):
     # The discussion body is preserved, and no second header is appended.
     assert "已有发言正文" in text
     assert text.count("## 第 1 轮讨论") == 1
+
+
+def test_meeting_context_summary_survives_a_round_trip():
+    meeting = Meeting(id="ctx", topic="t")
+    meeting.context_summary = "早前讨论摘要"
+    meeting.context_summary_upto = 1200
+    meeting.context_pinned_human = ["（第1轮）人类指令"]
+
+    restored = Meeting.from_persist_dict(meeting.to_persist_dict())
+
+    assert restored.context_summary == "早前讨论摘要"
+    assert restored.context_summary_upto == 1200
+    assert restored.context_pinned_human == ["（第1轮）人类指令"]
+
+
+def test_header_rewrite_shifts_the_summary_anchor(tmp_path):
+    meeting = Meeting(
+        id="anchor",
+        topic="短",
+        description="描述",
+        agents=[MeetingAgent(id="a", name="A", runtime="claude")],
+        shared_file="meeting.md",
+    )
+    meeting_mod._sync_shared_header(meeting, tmp_path)
+    shared = meeting_mod.get_shared_file_path(meeting, tmp_path)
+    with open(shared, "a", encoding="utf-8") as handle:
+        handle.write("\n## 第 1 轮讨论\n\n### A (claude) - 第1轮\n\n正文\n\n")
+    before = len(shared.read_text(encoding="utf-8"))
+    meeting.context_summary = "摘要"
+    meeting.context_summary_upto = before
+
+    meeting.topic = "一个明显更长的会议标题，用来制造头部位移"
+    meeting_mod._sync_shared_header(meeting, tmp_path)
+
+    after = len(shared.read_text(encoding="utf-8"))
+    assert after != before
+    assert meeting.context_summary_upto == before + (after - before)
+    assert "正文" in shared.read_text(encoding="utf-8")
 
 
 def test_shared_header_is_stable_when_synced_repeatedly(tmp_path):

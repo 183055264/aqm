@@ -89,6 +89,11 @@ class Meeting:
     # into REQUIREMENTS.md. Off by default so tests/embedded meetings never
     # spawn an extra CLI session unexpectedly.
     auto_requirements: bool = False
+    # Rolling meeting-context summary (see aqm.core.meeting_context). Persisted
+    # so a resumed meeting does not pay for compaction again.
+    context_summary: str = ""
+    context_summary_upto: int = 0
+    context_pinned_human: list[str] = field(default_factory=list)
     _thread: Optional[threading.Thread] = None
     # Requirements handoff status (never persisted; the file itself is truth).
     _requirements_status: str = "idle"
@@ -147,6 +152,9 @@ class Meeting:
             "waiting_for_human": self._waiting_human,
             "waiting_human_name": self._waiting_human_name,
             "has_human_agent": any(a.runtime == "human" for a in self.agents),
+            "context_summary_chars": len(self.context_summary or ""),
+            "context_summary_upto": self.context_summary_upto,
+            "context_pinned_human": len(self.context_pinned_human or []),
         }
 
     def to_persist_dict(self) -> dict:
@@ -187,6 +195,9 @@ class Meeting:
             "error": self.error,
             "project_dir": self.project_dir,
             "auto_requirements": self.auto_requirements,
+            "context_summary": self.context_summary,
+            "context_summary_upto": self.context_summary_upto,
+            "context_pinned_human": list(self.context_pinned_human),
         }
 
     @classmethod
@@ -213,6 +224,9 @@ class Meeting:
             error=data.get("error", ""),
             project_dir=data.get("project_dir"),
             auto_requirements=bool(data.get("auto_requirements", False)),
+            context_summary=data.get("context_summary", "") or "",
+            context_summary_upto=int(data.get("context_summary_upto") or 0),
+            context_pinned_human=list(data.get("context_pinned_human") or []),
         )
 
 
@@ -1091,6 +1105,16 @@ def _sync_shared_header(meeting: Meeting, project_root: Path) -> None:
             new_text = header + body
         if new_text == text:
             return
+        # Every speech after the header shifts by the header delta; keep the
+        # rolling-summary anchor aligned with the rewritten file.
+        delta = len(new_text) - len(text)
+        if delta and meeting.context_summary:
+            anchored = meeting.context_summary_upto + delta
+            if anchored <= 0:
+                meeting.context_summary = ""
+                meeting.context_summary_upto = 0
+            else:
+                meeting.context_summary_upto = anchored
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_text(new_text, encoding="utf-8")
         os.replace(tmp_path, path)
@@ -1280,18 +1304,85 @@ def submit_human_speech(
     return payload
 
 
+def _compact_backend(meeting: Meeting, settings: dict) -> tuple[str, str]:
+    """Pick the runtime/model used to summarise the meeting transcript."""
+    runtime_name = str(settings.get("runtime") or "")
+    model = str(settings.get("model") or "")
+    if runtime_name:
+        return runtime_name, model
+    candidates = [
+        a for a in meeting.agents if a.runtime and a.runtime != "human"
+    ]
+    host = next(
+        (
+            a
+            for a in candidates
+            if "主持" in a.name or "host" in a.name.lower()
+        ),
+        None,
+    )
+    pick = host or (candidates[0] if candidates else None)
+    if pick is None:
+        return "", model
+    return pick.runtime, model or pick.model or ""
+
+
+def _prepare_compaction(
+    meeting: Meeting,
+    project_root: Path,
+    stop_event: threading.Event,
+) -> tuple[dict, Optional[Any]]:
+    """Resolve ``meeting.compact`` settings and build the summariser, if any."""
+    from aqm.core.config import load_project_config
+    from aqm.core.meeting_context import make_invoker, resolve_compact_settings
+
+    raw = {}
+    try:
+        raw = (load_project_config(project_root).meeting or {}).get("compact") or {}
+    except Exception as exc:  # noqa: BLE001 - a bad config must not stop a meeting
+        logger.warning("Could not read meeting.compact settings: %s", exc)
+    settings = resolve_compact_settings(raw)
+    if not settings.get("enabled"):
+        return settings, None
+    runtime_name, model = _compact_backend(meeting, settings)
+    try:
+        invoker = make_invoker(
+            project_root,
+            runtime_name,
+            model,
+            int(settings.get("timeout") or 120),
+            should_stop=stop_event.is_set,
+        )
+    except Exception as exc:  # noqa: BLE001 - fall back to tail truncation
+        logger.warning("[MeetingCompaction] could not build summariser: %s", exc)
+        return settings, None
+    logger.info(
+        "[MeetingCompaction] enabled (runtime=%s model=%s trigger=%s keep=%s)",
+        runtime_name or "claude",
+        model or "-",
+        settings.get("trigger_chars"),
+        settings.get("keep_recent_chars"),
+    )
+    return settings, invoker
+
+
 def _run_meeting(
     meeting: Meeting,
     project_root: Path,
     stop_event: Optional[threading.Event] = None,
     run_token: Optional[int] = None,
 ) -> None:
+    from aqm.core.meeting_context import build_member_context
     from aqm.runtime.meeting_session import start_meeting_agent_session
     shared_path = get_shared_file_path(meeting, project_root)
     sessions: dict[int, Any] = {}
     shared_offsets: dict[int, int] = {}
 
     stop_event = stop_event or meeting._stop_event
+
+    compact_settings, compact_invoker = _prepare_compaction(
+        meeting, project_root, stop_event
+    )
 
     def stale() -> bool:
         """True when another run has taken over this meeting."""
@@ -1491,17 +1582,61 @@ def _run_meeting(
                         )
 
                     context = ""
-                    if shared_path.exists():
-                        text = shared_path.read_text(encoding="utf-8")
-                        start = shared_offsets.get(i)
-                        context = text if start is None or start > len(text) else text[start:]
-                        if len(context) > 8000:
-                            context = "...[前文省略]...\n" + context[-8000:]
                     empty_context = (
                         "（自上次发言后暂无新增记录）"
                         if i in shared_offsets
                         else "（无，你是第一个发言的）"
                     )
+                    if shared_path.exists():
+                        text = shared_path.read_text(encoding="utf-8")
+                        compacted = build_member_context(
+                            text,
+                            offset=shared_offsets.get(i),
+                            summary=meeting.context_summary,
+                            summary_upto=meeting.context_summary_upto,
+                            pinned_human=meeting.context_pinned_human,
+                            settings=compact_settings,
+                            invoke=compact_invoker,
+                        )
+                        context = compacted.feed
+                        if (
+                            compacted.summary != meeting.context_summary
+                            or compacted.summary_upto
+                            != meeting.context_summary_upto
+                            or compacted.pinned_human
+                            != meeting.context_pinned_human
+                        ):
+                            meeting.context_summary = compacted.summary
+                            meeting.context_summary_upto = compacted.summary_upto
+                            meeting.context_pinned_human = list(
+                                compacted.pinned_human
+                            )
+                            _save_meeting(meeting, project_root)
+                        if compacted.compacted:
+                            logger.info(
+                                "[MeetingCompaction] meeting=%s folded %d chars "
+                                "(dropped %d, summary %d, humans %d)",
+                                meeting.id,
+                                compacted.summarized_chars,
+                                compacted.dropped_chars,
+                                len(compacted.summary),
+                                len(compacted.pinned_human),
+                            )
+                            broadcast_meeting_event(
+                                meeting.id, "context_compacted", {
+                                    "meeting_id": meeting.id,
+                                    "summarized_chars": compacted.summarized_chars,
+                                    "dropped_chars": compacted.dropped_chars,
+                                    "summary_chars": len(compacted.summary),
+                                    "pinned_human": len(compacted.pinned_human),
+                                    "round": round_num,
+                                },
+                            )
+                        if compacted.error:
+                            logger.warning(
+                                "[MeetingCompaction] meeting=%s %s",
+                                meeting.id, compacted.error,
+                            )
 
                     prompt = (
                         f"【项目背景】\n{meeting.description}\n\n"

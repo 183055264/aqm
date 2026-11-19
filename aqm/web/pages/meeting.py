@@ -1247,6 +1247,14 @@ function showLiveView(meetingId, meeting) {
     });
     updateAgentStatus(d.agent_id, 'error', d.agent_name);
   });
+  eventSource.addEventListener('context_compacted', e => {
+    const d = JSON.parse(e.data);
+    let msg = `\n[第 ${d.round} 轮] 会议记录较长：前 ${d.summarized_chars} 字已压缩为摘要`
+      + `（摘要 ${d.summary_chars} 字）`;
+    if (d.pinned_human) msg += `，另有 ${d.pinned_human} 条人类指令全文保留`;
+    if (d.dropped_chars) msg += `；更早的 ${d.dropped_chars} 字未纳入摘要`;
+    _enqueueTyping(msg + '\n', { color: '#8b949e' });
+  });
   eventSource.addEventListener('human_turn', e => {
     const d = JSON.parse(e.data);
     clearLiveWaiting();

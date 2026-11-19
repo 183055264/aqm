@@ -57,6 +57,9 @@ class ProjectConfig:
     # "english" force a naming convention.  Temporary files are never
     # constrained.
     deliverable_naming: str = "auto"
+    # Meeting behaviour.  ``meeting.compact`` controls how a long shared
+    # transcript is folded into a rolling summary, see aqm.core.meeting_context.
+    meeting: dict = field(default_factory=dict)
 
 
 def _ensure_config_dir() -> None:
@@ -155,6 +158,7 @@ def load_project_config(root: Path) -> ProjectConfig:
             chunks=data.get("chunks") or {},
             server=data.get("server") or {"auto_resume": True},
             team_template=data.get("team_template"),
+            meeting=data.get("meeting") or {},
         )
     except (yaml.YAMLError, OSError) as e:
         logger.warning("Failed to load project config: %s", e)
@@ -178,6 +182,8 @@ def save_project_config(root: Path, config: ProjectConfig) -> None:
         data["deliverable_naming"] = config.deliverable_naming
     if config.chunks:
         data["chunks"] = config.chunks
+    if config.meeting:
+        data["meeting"] = config.meeting
     if config.team_template:
         data["team_template"] = config.team_template
     config_file.write_text(

@@ -26,7 +26,20 @@ from aqm.web.pages.task_detail import render_task_detail
 from aqm.web.pages.tasks import render_tasks
 from aqm.web.pages.validate import render_validate
 
-SCRIPT_RE = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
+SCRIPT_RE = re.compile(r"<script([^>]*)>(.*?)</script>", re.S)
+_JS_TYPES = {"", "module", "text/javascript", "application/javascript"}
+
+
+def _js_blocks(html: str) -> list[str]:
+    """Inline scripts that actually contain JS (skip JSON data blocks)."""
+    blocks: list[str] = []
+    for attrs, source in SCRIPT_RE.findall(html):
+        match = re.search(r"""type\s*=\s*["']([^"']*)["']""", attrs)
+        if match and match.group(1).strip().lower() not in _JS_TYPES:
+            continue
+        if source.strip():
+            blocks.append(source)
+    return blocks
 
 
 def _pages() -> dict[str, str]:
@@ -50,7 +63,7 @@ def _pages() -> dict[str, str]:
 @pytest.mark.parametrize("page", sorted(_pages()))
 def test_inline_scripts_parse(page: str) -> None:
     html = _pages()[page]
-    blocks = [b for b in SCRIPT_RE.findall(html) if b.strip()]
+    blocks = _js_blocks(html)
     assert blocks, f"{page} has no inline script blocks"
 
     with tempfile.TemporaryDirectory(prefix="aqm-js-") as tmp:

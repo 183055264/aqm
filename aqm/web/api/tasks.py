@@ -163,6 +163,18 @@ class PriorityRequest(BaseModel):
     priority: str  # critical, high, normal, low
 
 
+class UpdateTaskRequest(BaseModel):
+    """Editable task fields from the task list.
+
+    ``description`` / ``pipeline`` only apply when the task is not running;
+    ``priority`` can always be changed.
+    """
+
+    description: Optional[str] = None
+    priority: Optional[str] = None
+    pipeline: Optional[str] = None
+
+
 class AddChunkRequest(BaseModel):
     description: Optional[str] = None
     descriptions: Optional[list[str]] = None
@@ -728,6 +740,101 @@ def create_tasks_router(project_root: Path) -> APIRouter:
             raise HTTPException(404, "Task not found")
         task, _ = found
         return task.model_dump(mode="json")
+
+    @router.patch("/api/tasks/{task_id}")
+    async def api_update_task(task_id: str, req: UpdateTaskRequest):
+        """Edit a task's description / priority / pipeline from the list.
+
+        The task object is re-read from its own project database so editing a
+        task that lives in another project works the same as restarting it.
+        Description and pipeline are refused while the task is running:
+        changing them mid-run would silently change later prompts.
+        """
+        from aqm.core.task import TaskPriority
+
+        found = find_task(project_root, task_id)
+        if found is None:
+            raise HTTPException(404, "Task not found")
+        task, task_root = found
+
+        wants_description = req.description is not None
+        wants_pipeline = req.pipeline is not None
+        description = (req.description or "").strip() if wants_description else None
+        if wants_description:
+            if not description:
+                raise HTTPException(400, "任务描述不能为空")
+            if len(description) > 20000:
+                raise HTTPException(400, "任务描述过长（上限 20000 字）")
+
+        priority = None
+        if req.priority is not None:
+            try:
+                priority = TaskPriority[str(req.priority).strip().lower()]
+            except KeyError:
+                raise HTTPException(400, f"未知优先级: {req.priority}")
+
+        pipeline_name = (req.pipeline or "").strip() if wants_pipeline else None
+        if wants_pipeline and pipeline_name:
+            try:
+                path = get_agents_yaml_path(task_root, pipeline_name)
+            except ValueError as exc:
+                raise HTTPException(400, f"流水线名称无效: {exc}")
+            if not path.exists():
+                raise HTTPException(404, f"流水线不存在: {pipeline_name}")
+
+        active = {
+            TaskStatus.in_progress,
+            TaskStatus.awaiting_gate,
+            TaskStatus.awaiting_human_input,
+        }
+        queue = SQLiteQueue(get_db_path(task_root))
+        live = task
+        changes: dict[str, str] = {}
+        try:
+            live = queue.get(task_id) or task
+            if live.status in active and (
+                wants_description or wants_pipeline
+            ):
+                raise HTTPException(
+                    409,
+                    "任务正在运行，只能修改优先级；"
+                    "描述和流水线请先停止任务再改",
+                )
+
+            if description is not None and description != live.description:
+                live.description = description
+                changes["description"] = "updated"
+            if priority is not None and priority != live.priority:
+                live.priority = priority
+                changes["priority"] = priority.name.lower()
+            if wants_pipeline:
+                current = str((live.metadata or {}).get("pipeline") or "")
+                if pipeline_name and pipeline_name != current:
+                    live.metadata["pipeline"] = pipeline_name
+                    changes["pipeline"] = pipeline_name
+                elif not pipeline_name and current:
+                    live.metadata.pop("pipeline", None)
+                    changes["pipeline"] = ""
+
+            if changes:
+                live.touch()
+                queue.update(live)
+        finally:
+            queue.close()
+
+        if changes:
+            broadcast_event(task_id, "task_updated", {
+                "task_id": task_id,
+                "changes": changes,
+            })
+
+        return {
+            "id": task_id,
+            "changes": changes,
+            "description": live.description,
+            "priority": live.priority.name.lower(),
+            "pipeline": str((live.metadata or {}).get("pipeline") or ""),
+        }
 
     # ── Run Pipeline ───────────────────────────────────────────────────
 

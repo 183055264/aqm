@@ -1774,3 +1774,104 @@ def test_render_pipelines_labels_other_projects():
     # passing the Windows path as a properly escaped JS string literal.
     assert "切换控制台" in html
     assert 'switchConsoleTo(&quot;E:\\\\proj-b&quot;, &quot;/pipelines?edit=research&quot;)' in html
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TASK EDIT (list page PATCH /api/tasks/{id})
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestTaskEdit:
+    def _seed(self, client, status=TaskStatus.pending):
+        from aqm.core.project import get_db_path
+        from aqm.queue.sqlite import SQLiteQueue
+
+        r = client.post("/api/tasks", json={"description": "原始描述"})
+        assert r.status_code == 200
+        task_id = r.json()["id"]
+        queue = SQLiteQueue(get_db_path(client.app.state.project_root))
+        try:
+            task = queue.get(task_id)
+            task.status = status
+            task.metadata["pipeline"] = "default"
+            queue.update(task)
+        finally:
+            queue.close()
+        return task_id
+
+    def test_edit_description_and_priority(self, client, project):
+        task_id = self._seed(client)
+
+        r = client.patch(
+            f"/api/tasks/{task_id}",
+            json={"description": "  改好的描述  ", "priority": "high"},
+        )
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["description"] == "改好的描述"
+        assert body["priority"] == "high"
+        assert body["changes"]["description"] == "updated"
+        assert body["changes"]["priority"] == "high"
+
+        live = client.get(f"/api/tasks/{task_id}").json()
+        assert live["description"] == "改好的描述"
+        assert live["priority"] == 1
+
+    def test_edit_pipeline(self, client, project):
+        task_id = self._seed(client)
+
+        r = client.patch(f"/api/tasks/{task_id}", json={"pipeline": "default"})
+
+        assert r.status_code == 200
+        # Selecting the value it already has is a no-op, not a fake change.
+        assert r.json()["changes"] == {}
+
+    def test_unknown_pipeline_is_rejected(self, client, project):
+        task_id = self._seed(client)
+
+        r = client.patch(f"/api/tasks/{task_id}", json={"pipeline": "nope"})
+
+        assert r.status_code == 404
+        assert "nope" in r.text
+
+    def test_empty_description_is_rejected(self, client, project):
+        task_id = self._seed(client)
+
+        r = client.patch(f"/api/tasks/{task_id}", json={"description": "   "})
+
+        assert r.status_code == 400
+
+    def test_unknown_priority_is_rejected(self, client, project):
+        task_id = self._seed(client)
+
+        r = client.patch(f"/api/tasks/{task_id}", json={"priority": "urgent"})
+
+        assert r.status_code == 400
+
+    def test_running_task_only_accepts_priority(self, client, project):
+        task_id = self._seed(client, status=TaskStatus.in_progress)
+
+        blocked = client.patch(
+            f"/api/tasks/{task_id}", json={"description": "想偷偷改"}
+        )
+        assert blocked.status_code == 409
+        assert "停止任务" in blocked.text
+
+        ok = client.patch(f"/api/tasks/{task_id}", json={"priority": "low"})
+        assert ok.status_code == 200
+        assert ok.json()["priority"] == "low"
+
+    def test_missing_task_returns_404(self, client):
+        r = client.patch("/api/tasks/T-NOPE", json={"description": "x"})
+        assert r.status_code == 404
+
+    def test_task_list_has_edit_button_and_modal(self, client):
+        self._seed(client)
+
+        html = client.get("/tasks").text
+
+        assert "showEditTask(" in html
+        assert 'id="editModal"' in html
+        assert 'id="taskData"' in html
+        assert "confirmEditTask()" in html

@@ -133,6 +133,7 @@ def render_tasks(
 </div>"""
 
     # Task table
+    task_data: dict[str, dict] = {}
     if not tasks:
         table_body = """\
 <div class="empty-state">
@@ -157,6 +158,10 @@ def render_tasks(
             p_name = t.priority.name
 
             actions_items = f'<a href="/tasks/{esc(t.id)}">查看</a>'
+            if not is_external:
+                actions_items += (
+                    f'<button onclick="showEditTask(\'{esc(t.id)}\')">编辑</button>'
+                )
             if not is_external and t.status in (TaskStatus.completed, TaskStatus.failed):
                 actions_items += f'<button onclick="showFixForm(\'{esc(t.id)}\')">修复</button>'
             if t.status in (TaskStatus.failed, TaskStatus.completed, TaskStatus.stalled, TaskStatus.cancelled):
@@ -196,6 +201,17 @@ def render_tasks(
                 if pipeline_name
                 else '<span style="color:var(--text-dim);" title="任务未记录流水线（可能是命令行创建）">-</span>'
             )
+            if not is_external:
+                task_data[t.id] = {
+                    "description": t.description,
+                    "priority": p_name.lower(),
+                    "pipeline": pipeline_name,
+                    "locked": t.status in (
+                        TaskStatus.in_progress,
+                        TaskStatus.awaiting_gate,
+                        TaskStatus.awaiting_human_input,
+                    ),
+                }
             row_list.append(
                 f'<tr data-status="{esc(display_status(t))}" data-agent="{agent}" '
                 f'data-project-dir="{esc(task_project_dir)}" '
@@ -299,6 +315,58 @@ def render_tasks(
   </div>
 </div>"""
 
+    # Edit modal
+    edit_pipeline_options = "".join(
+        f'<option value="{esc(p)}">{esc(p)}</option>'
+        for p in (pipelines or [])
+    )
+    edit_modal = (
+        """\
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <h3>编辑任务 <span id="editTaskIdLabel"></span></h3>
+    <input type="hidden" id="editTaskId">
+    <div class="form-group">
+      <label for="editDesc">任务描述</label>
+      <textarea id="editDesc" rows="6" placeholder="任务描述..."></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="form-group">
+        <label for="editPriority">优先级</label>
+        <select id="editPriority">
+          <option value="critical">紧急</option>
+          <option value="high">高</option>
+          <option value="normal">普通</option>
+          <option value="low">低</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="editPipeline">流水线</label>
+        <select id="editPipeline">
+          <option value="">（不设置）</option>
+"""
+        + edit_pipeline_options
+        + """\
+        </select>
+      </div>
+    </div>
+    <p id="editLockHint" style="display:none;font-size:12px;color:var(--orange);margin:0 0 8px;">
+      任务正在运行，只能修改优先级；描述和流水线需先停止任务。
+    </p>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn btn-primary" id="btnSaveEdit" onclick="confirmEditTask()">保存</button>
+      <button class="btn" onclick="document.getElementById('editModal').classList.remove('show')">取消</button>
+    </div>
+  </div>
+</div>"""
+    )
+
+    task_data_block = (
+        '<script id="taskData" type="application/json">'
+        + json.dumps(task_data, ensure_ascii=False).replace("</", "<\\/")
+        + "</script>"
+    )
+
     js = """\
 <script>
 /* ── Run form ──────────────────────────────── */
@@ -358,6 +426,60 @@ async function confirmCancel() {
     document.getElementById('cancelModal').classList.remove('show');
     setTimeout(() => location.reload(), 600);
   } catch(e) {}
+}
+
+/* ── Edit modal ────────────────────────────── */
+const TASK_DATA = (() => {
+  const el = document.getElementById('taskData');
+  try { return el ? JSON.parse(el.textContent) : {}; } catch (e) { return {}; }
+})();
+let editLocked = false;
+
+function showEditTask(taskId) {
+  const t = TASK_DATA[taskId] || {};
+  editLocked = !!t.locked;
+  document.getElementById('editTaskId').value = taskId;
+  document.getElementById('editTaskIdLabel').textContent = taskId;
+  const desc = document.getElementById('editDesc');
+  desc.value = t.description || '';
+  desc.disabled = editLocked;
+  document.getElementById('editPriority').value = t.priority || 'normal';
+  const pipe = document.getElementById('editPipeline');
+  const current = t.pipeline || '';
+  if (current && !Array.from(pipe.options).some(o => o.value === current)) {
+    const opt = document.createElement('option');
+    opt.value = current;
+    opt.textContent = current;
+    pipe.appendChild(opt);
+  }
+  pipe.value = current;
+  pipe.disabled = editLocked;
+  document.getElementById('editLockHint').style.display = editLocked ? '' : 'none';
+  document.getElementById('editModal').classList.add('show');
+  if (!editLocked) desc.focus();
+}
+
+async function confirmEditTask() {
+  const taskId = document.getElementById('editTaskId').value;
+  if (!taskId) return;
+  const body = {priority: document.getElementById('editPriority').value};
+  if (!editLocked) {
+    body.description = document.getElementById('editDesc').value.trim();
+    if (!body.description) { showToast('任务描述不能为空'); return; }
+    body.pipeline = document.getElementById('editPipeline').value;
+  }
+  const btn = document.getElementById('btnSaveEdit');
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+  try {
+    await apiFetch('/api/tasks/' + taskId, {method:'PATCH', body:JSON.stringify(body)});
+    showToast('任务已更新');
+    document.getElementById('editModal').classList.remove('show');
+    setTimeout(() => location.reload(), 400);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '保存';
+  }
 }
 
 /* ── Restart ───────────────────────────────── */
@@ -530,6 +652,7 @@ paginate();
 
     return layout(
         "任务",
-        f"{pipeline_selector}\n{error_banner}\n{form}\n{table}\n{cancel_modal}\n{fix_modal}\n{js}",
+        f"{pipeline_selector}\n{error_banner}\n{form}\n{table}\n"
+        f"{cancel_modal}\n{fix_modal}\n{edit_modal}\n{task_data_block}\n{js}",
         active="tasks",
     )
